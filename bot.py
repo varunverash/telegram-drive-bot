@@ -19,7 +19,10 @@ from googleapiclient.http import MediaIoBaseUpload
 # =========================
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-ALLOWED_TELEGRAM_ID = 556318583
+ALLOWED_TELEGRAM_IDS = {
+    556318583,
+    5237041275,
+}
 
 DRIVE_FOLDER_ID = "1u9R8-cU4im44hcPDOZzsZ2lVa_6u0cX9"
 
@@ -75,10 +78,10 @@ def upload_to_drive(file_bytes, filename, mime_type):
 # TELEGRAM
 # =========================
 
-def is_allowed(update: Update):
+    def is_allowed(update: Update):
     return (
         update.effective_user
-        and update.effective_user.id == ALLOWED_TELEGRAM_ID
+        and update.effective_user.id in ALLOWED_TELEGRAM_IDS
     )
 
 
