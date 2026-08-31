@@ -38,7 +38,7 @@ SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 DB_FILE = "bot_stats.db"
 
-# Number of files processed simultaneously
+# Normal files: 3 at a time
 WORKER_COUNT = 3
 
 
@@ -48,9 +48,8 @@ WORKER_COUNT = 3
 
 file_queue = asyncio.Queue()
 
-# Files currently waiting/being processed.
-# This prevents the same file from being queued multiple times
-# before the first copy finishes.
+# Files currently waiting or processing.
+# Prevents simultaneous duplicate uploads.
 in_progress = set()
 
 in_progress_lock = asyncio.Lock()
@@ -153,6 +152,9 @@ def get_stats():
 
 def is_duplicate(file_unique_id):
 
+    if not file_unique_id:
+        return False
+
     conn = get_db()
 
     row = conn.execute(
@@ -175,6 +177,9 @@ def save_processed_file(
     drive_file_id,
     file_size,
 ):
+
+    if not file_unique_id:
+        return
 
     conn = get_db()
 
@@ -213,6 +218,55 @@ def get_drive_service():
         "v3",
         credentials=credentials,
     )
+
+
+def check_drive_duplicate(
+    filename,
+    file_size,
+):
+    """
+    Checks the Google Drive folder for a file
+    with the same filename AND size.
+
+    Returns:
+        matching file information if found
+        None if not found
+    """
+
+    service = get_drive_service()
+
+    # Escape single quotes for Drive query
+    safe_filename = filename.replace("\\", "\\\\").replace(
+        "'",
+        "\\'"
+    )
+
+    query = (
+        f"name = '{safe_filename}' "
+        f"and '{DRIVE_FOLDER_ID}' in parents "
+        f"and trashed = false"
+    )
+
+    results = service.files().list(
+        q=query,
+        spaces="drive",
+        fields="files(id,name,size,mimeType)",
+        pageSize=100,
+    ).execute()
+
+    files = results.get("files", [])
+
+    for drive_file in files:
+
+        drive_size = drive_file.get("size")
+
+        if drive_size is not None:
+
+            if int(drive_size) == int(file_size):
+
+                return drive_file
+
+    return None
 
 
 def upload_to_drive(
@@ -378,6 +432,7 @@ def get_file_information(message):
             message.audio.file_name or "audio.mp3",
             message.audio.mime_type or "audio/mpeg",
             message.audio.file_unique_id,
+            message.audio.file_size or 0,
         )
 
     if message.document:
@@ -388,6 +443,7 @@ def get_file_information(message):
             message.document.mime_type
             or "application/octet-stream",
             message.document.file_unique_id,
+            message.document.file_size or 0,
         )
 
     if message.video:
@@ -397,6 +453,7 @@ def get_file_information(message):
             "video.mp4",
             "video/mp4",
             message.video.file_unique_id,
+            message.video.file_size or 0,
         )
 
     return None
@@ -426,9 +483,13 @@ async def handle_file(
 
         return
 
-    telegram_media, filename, mime_type, file_unique_id = (
-        file_info
-    )
+    (
+        telegram_media,
+        filename,
+        mime_type,
+        file_unique_id,
+        telegram_file_size,
+    ) = file_info
 
     # ---------------------------------
     # Count received
@@ -437,12 +498,11 @@ async def handle_file(
     increment_stat("sent")
 
     # ---------------------------------
-    # DUPLICATE / IN-PROGRESS CHECK
+    # LOCAL DATABASE / IN-PROGRESS CHECK
     # ---------------------------------
 
     async with in_progress_lock:
 
-        # Already successfully uploaded
         if file_unique_id and is_duplicate(
             file_unique_id
         ):
@@ -457,7 +517,6 @@ async def handle_file(
 
             return
 
-        # Already waiting or being processed
         if (
             file_unique_id
             and file_unique_id in in_progress
@@ -473,12 +532,79 @@ async def handle_file(
 
             return
 
-        # Reserve this file immediately
+        # Reserve immediately
         if file_unique_id:
             in_progress.add(file_unique_id)
 
     # ---------------------------------
-    # Add to queue
+    # GOOGLE DRIVE CHECK
+    # ---------------------------------
+
+    try:
+
+        # Telegram gives us the file size,
+        # so we can check Drive WITHOUT downloading.
+        if telegram_file_size > 0:
+
+            drive_match = await asyncio.to_thread(
+                check_drive_duplicate,
+                filename,
+                telegram_file_size,
+            )
+
+            if drive_match:
+
+                increment_stat("duplicates")
+
+                # Record it locally too
+                save_processed_file(
+                    file_unique_id=file_unique_id,
+                    filename=filename,
+                    drive_file_id=drive_match["id"],
+                    file_size=telegram_file_size,
+                )
+
+                async with in_progress_lock:
+                    in_progress.discard(
+                        file_unique_id
+                    )
+
+                await message.reply_text(
+                    "⏭️ Duplicate skipped!\n\n"
+                    f"📄 {filename}\n"
+                    f"📦 {telegram_file_size / 1024 / 1024:.2f} MB\n\n"
+                    "This file already exists in "
+                    "your Google Drive."
+                )
+
+                return
+
+    except Exception as e:
+
+        print(
+            "DRIVE DUPLICATE CHECK ERROR:",
+            repr(e),
+        )
+
+        # We don't want to risk uploading a duplicate
+        # if Google Drive cannot be checked.
+        increment_stat("failed")
+
+        async with in_progress_lock:
+            in_progress.discard(
+                file_unique_id
+            )
+
+        await message.reply_text(
+            "❌ Could not check Google Drive.\n\n"
+            f"📄 {filename}\n\n"
+            "The file was NOT downloaded or uploaded."
+        )
+
+        return
+
+    # ---------------------------------
+    # ADD TO QUEUE
     # ---------------------------------
 
     await file_queue.put({
@@ -488,9 +614,6 @@ async def handle_file(
         "mime_type": mime_type,
         "file_unique_id": file_unique_id,
     })
-
-    # Don't send a separate message for every queued file.
-    # This keeps Telegram cleaner when sending hundreds of files.
 
 
 # =========================
@@ -510,7 +633,7 @@ async def process_file(item):
     try:
 
         # ---------------------------------
-        # Get Telegram file
+        # GET TELEGRAM FILE
         # ---------------------------------
 
         telegram_file = (
@@ -570,14 +693,12 @@ async def process_file(item):
         # SAVE SUCCESS
         # ---------------------------------
 
-        if file_unique_id:
-
-            save_processed_file(
-                file_unique_id=file_unique_id,
-                filename=filename,
-                drive_file_id=result["id"],
-                file_size=uploaded_size,
-            )
+        save_processed_file(
+            file_unique_id=file_unique_id,
+            filename=filename,
+            drive_file_id=result["id"],
+            file_size=uploaded_size,
+        )
 
         increment_stat("uploaded")
 
@@ -587,7 +708,7 @@ async def process_file(item):
         )
 
         # ---------------------------------
-        # SUCCESS MESSAGE
+        # SUCCESS
         # ---------------------------------
 
         await status_message.edit_text(
@@ -621,7 +742,7 @@ async def process_file(item):
     finally:
 
         # ---------------------------------
-        # Remove from in-progress
+        # REMOVE FROM IN-PROGRESS
         # ---------------------------------
 
         if file_unique_id:
@@ -703,6 +824,7 @@ async def post_init(application):
 
 def main():
 
+    # Initialize database
     get_db()
 
     app = (
