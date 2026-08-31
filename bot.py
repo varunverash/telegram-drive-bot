@@ -78,7 +78,7 @@ def upload_to_drive(file_bytes, filename, mime_type):
 # TELEGRAM
 # =========================
 
-    def is_allowed(update: Update):
+def is_allowed(update: Update):
     return (
         update.effective_user
         and update.effective_user.id in ALLOWED_TELEGRAM_IDS
