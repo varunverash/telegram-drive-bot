@@ -2,6 +2,7 @@ import os
 import io
 import asyncio
 import sqlite3
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -35,8 +36,26 @@ GOOGLE_REFRESH_TOKEN = os.environ["GOOGLE_REFRESH_TOKEN"]
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-# Database file
 DB_FILE = "bot_stats.db"
+
+# Number of files processed simultaneously
+WORKER_COUNT = 3
+
+
+# =========================
+# GLOBAL QUEUE
+# =========================
+
+file_queue = asyncio.Queue()
+
+# Files currently waiting/being processed.
+# This prevents the same file from being queued multiple times
+# before the first copy finishes.
+in_progress = set()
+
+in_progress_lock = asyncio.Lock()
+
+workers = []
 
 
 # =========================
@@ -45,6 +64,7 @@ DB_FILE = "bot_stats.db"
 
 def get_db():
     conn = sqlite3.connect(DB_FILE)
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS stats (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -75,11 +95,11 @@ def get_db():
     """)
 
     conn.commit()
+
     return conn
 
 
 def increment_stat(stat_name, amount=1):
-    conn = get_db()
 
     allowed = {
         "sent",
@@ -92,11 +112,16 @@ def increment_stat(stat_name, amount=1):
     }
 
     if stat_name not in allowed:
-        conn.close()
         return
 
+    conn = get_db()
+
     conn.execute(
-        f"UPDATE stats SET {stat_name} = {stat_name} + ? WHERE id = 1",
+        f"""
+        UPDATE stats
+        SET {stat_name} = {stat_name} + ?
+        WHERE id = 1
+        """,
         (amount,),
     )
 
@@ -105,6 +130,7 @@ def increment_stat(stat_name, amount=1):
 
 
 def get_stats():
+
     conn = get_db()
 
     row = conn.execute("""
@@ -126,10 +152,15 @@ def get_stats():
 
 
 def is_duplicate(file_unique_id):
+
     conn = get_db()
 
     row = conn.execute(
-        "SELECT 1 FROM processed_files WHERE file_unique_id = ?",
+        """
+        SELECT 1
+        FROM processed_files
+        WHERE file_unique_id = ?
+        """,
         (file_unique_id,),
     ).fetchone()
 
@@ -144,6 +175,7 @@ def save_processed_file(
     drive_file_id,
     file_size,
 ):
+
     conn = get_db()
 
     conn.execute("""
@@ -166,6 +198,7 @@ def save_processed_file(
 # =========================
 
 def get_drive_service():
+
     credentials = Credentials(
         token=None,
         refresh_token=GOOGLE_REFRESH_TOKEN,
@@ -182,7 +215,12 @@ def get_drive_service():
     )
 
 
-def upload_to_drive(file_bytes, filename, mime_type):
+def upload_to_drive(
+    file_bytes,
+    filename,
+    mime_type,
+):
+
     service = get_drive_service()
 
     metadata = {
@@ -210,9 +248,11 @@ def upload_to_drive(file_bytes, filename, mime_type):
 # =========================
 
 def is_allowed(update: Update):
+
     return (
         update.effective_user
-        and update.effective_user.id in ALLOWED_TELEGRAM_IDS
+        and update.effective_user.id
+        in ALLOWED_TELEGRAM_IDS
     )
 
 
@@ -220,23 +260,31 @@ def is_allowed(update: Update):
 # START
 # =========================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
     if not is_allowed(update):
         return
 
     await update.message.reply_text(
         "🎵 Telegram → Google Drive Bot\n\n"
-        "Send me an MP3, FLAC, video, or any other file "
-        "and I'll upload it to your Google Drive.\n\n"
-        "📊 Use /stats to see upload statistics."
+        "Send me MP3, FLAC, video, or any other file.\n\n"
+        "📊 /stats - Statistics\n"
+        "📈 /status - Current queue"
     )
 
 
 # =========================
-# STATS COMMAND
+# STATS
 # =========================
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
     if not is_allowed(update):
         return
 
@@ -250,19 +298,108 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uploaded_bytes,
     ) = get_stats()
 
-    downloaded_mb = downloaded_bytes / 1024 / 1024
-    uploaded_mb = uploaded_bytes / 1024 / 1024
+    downloaded_mb = (
+        downloaded_bytes / 1024 / 1024
+    )
+
+    uploaded_mb = (
+        uploaded_bytes / 1024 / 1024
+    )
 
     await update.message.reply_text(
         "📊 BOT STATISTICS\n\n"
+
         f"📥 Files sent: {sent}\n"
         f"⬇️ Downloaded: {downloaded}\n"
         f"☁️ Uploaded: {uploaded}\n"
         f"❌ Failed: {failed}\n"
         f"⏭️ Duplicates skipped: {duplicates}\n\n"
-        f"📦 Downloaded data: {downloaded_mb:.2f} MB\n"
-        f"☁️ Uploaded data: {uploaded_mb:.2f} MB"
+
+        f"📦 Downloaded data: "
+        f"{downloaded_mb:.2f} MB\n"
+
+        f"☁️ Uploaded data: "
+        f"{uploaded_mb:.2f} MB"
     )
+
+
+# =========================
+# STATUS
+# =========================
+
+async def status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if not is_allowed(update):
+        return
+
+    (
+        sent,
+        downloaded,
+        uploaded,
+        failed,
+        duplicates,
+        downloaded_bytes,
+        uploaded_bytes,
+    ) = get_stats()
+
+    waiting = file_queue.qsize()
+
+    async with in_progress_lock:
+        processing = len(in_progress)
+
+    await update.message.reply_text(
+        "📈 BOT STATUS\n\n"
+
+        f"📥 Files received: {sent}\n"
+        f"☁️ Uploaded: {uploaded}\n"
+        f"❌ Failed: {failed}\n"
+        f"⏭️ Duplicates: {duplicates}\n\n"
+
+        f"⚙️ Processing now: {processing}\n"
+        f"📋 Waiting in queue: {waiting}\n"
+        f"🔢 Total remaining: "
+        f"{waiting + processing}"
+    )
+
+
+# =========================
+# GET FILE INFORMATION
+# =========================
+
+def get_file_information(message):
+
+    if message.audio:
+
+        return (
+            message.audio,
+            message.audio.file_name or "audio.mp3",
+            message.audio.mime_type or "audio/mpeg",
+            message.audio.file_unique_id,
+        )
+
+    if message.document:
+
+        return (
+            message.document,
+            message.document.file_name or "file",
+            message.document.mime_type
+            or "application/octet-stream",
+            message.document.file_unique_id,
+        )
+
+    if message.video:
+
+        return (
+            message.video,
+            "video.mp4",
+            "video/mp4",
+            message.video.file_unique_id,
+        )
+
+    return None
 
 
 # =========================
@@ -273,102 +410,120 @@ async def handle_file(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+
     if not is_allowed(update):
         return
 
     message = update.message
 
-    # ---------------------------------
-    # Determine Telegram file
-    # ---------------------------------
+    file_info = get_file_information(message)
 
-    telegram_file = None
-    filename = None
-    mime_type = "application/octet-stream"
-    file_unique_id = None
+    if not file_info:
 
-    if message.audio:
-
-        telegram_file = await message.audio.get_file()
-
-        filename = (
-            message.audio.file_name
-            or "audio.mp3"
-        )
-
-        mime_type = (
-            message.audio.mime_type
-            or "audio/mpeg"
-        )
-
-        file_unique_id = message.audio.file_unique_id
-
-    elif message.document:
-
-        telegram_file = await message.document.get_file()
-
-        filename = (
-            message.document.file_name
-            or "file"
-        )
-
-        mime_type = (
-            message.document.mime_type
-            or "application/octet-stream"
-        )
-
-        file_unique_id = message.document.file_unique_id
-
-    elif message.video:
-
-        telegram_file = await message.video.get_file()
-
-        filename = "video.mp4"
-        mime_type = "video/mp4"
-
-        file_unique_id = message.video.file_unique_id
-
-    else:
         await message.reply_text(
             "❌ Please send a file."
         )
+
         return
 
+    telegram_media, filename, mime_type, file_unique_id = (
+        file_info
+    )
+
     # ---------------------------------
-    # Count received file
+    # Count received
     # ---------------------------------
 
     increment_stat("sent")
 
     # ---------------------------------
-    # DUPLICATE CHECK
+    # DUPLICATE / IN-PROGRESS CHECK
     # ---------------------------------
 
-    if file_unique_id and is_duplicate(file_unique_id):
+    async with in_progress_lock:
 
-        increment_stat("duplicates")
+        # Already successfully uploaded
+        if file_unique_id and is_duplicate(
+            file_unique_id
+        ):
 
-        await message.reply_text(
-            f"⏭️ Duplicate skipped!\n\n"
-            f"📄 {filename}\n\n"
-            f"This file has already been uploaded."
-        )
+            increment_stat("duplicates")
 
-        return
+            await message.reply_text(
+                "⏭️ Duplicate skipped!\n\n"
+                f"📄 {filename}\n\n"
+                "This file has already been uploaded."
+            )
+
+            return
+
+        # Already waiting or being processed
+        if (
+            file_unique_id
+            and file_unique_id in in_progress
+        ):
+
+            increment_stat("duplicates")
+
+            await message.reply_text(
+                "⏭️ Duplicate skipped!\n\n"
+                f"📄 {filename}\n\n"
+                "This file is already in the queue."
+            )
+
+            return
+
+        # Reserve this file immediately
+        if file_unique_id:
+            in_progress.add(file_unique_id)
 
     # ---------------------------------
-    # Status message
+    # Add to queue
     # ---------------------------------
 
-    status = await message.reply_text(
-        f"⬇️ Downloading:\n{filename}"
-    )
+    await file_queue.put({
+        "message": message,
+        "telegram_media": telegram_media,
+        "filename": filename,
+        "mime_type": mime_type,
+        "file_unique_id": file_unique_id,
+    })
+
+    # Don't send a separate message for every queued file.
+    # This keeps Telegram cleaner when sending hundreds of files.
+
+
+# =========================
+# PROCESS ONE FILE
+# =========================
+
+async def process_file(item):
+
+    message = item["message"]
+    telegram_media = item["telegram_media"]
+    filename = item["filename"]
+    mime_type = item["mime_type"]
+    file_unique_id = item["file_unique_id"]
+
+    status_message = None
 
     try:
 
-        # =============================
-        # DOWNLOAD FROM TELEGRAM
-        # =============================
+        # ---------------------------------
+        # Get Telegram file
+        # ---------------------------------
+
+        telegram_file = (
+            await telegram_media.get_file()
+        )
+
+        status_message = await message.reply_text(
+            f"⬇️ Downloading:\n{filename}"
+        )
+
+        # ---------------------------------
+        # DOWNLOAD
+        # ---------------------------------
 
         file_data = io.BytesIO()
 
@@ -377,19 +532,21 @@ async def handle_file(
         )
 
         file_bytes = file_data.getvalue()
+
         file_size = len(file_bytes)
 
         increment_stat("downloaded")
+
         increment_stat(
             "downloaded_bytes",
             file_size,
         )
 
-        # =============================
-        # UPLOAD TO GOOGLE DRIVE
-        # =============================
+        # ---------------------------------
+        # UPLOAD
+        # ---------------------------------
 
-        await status.edit_text(
+        await status_message.edit_text(
             f"⬆️ Uploading to Google Drive:\n"
             f"{filename}\n\n"
             f"📦 {file_size / 1024 / 1024:.2f} MB"
@@ -409,9 +566,9 @@ async def handle_file(
             )
         )
 
-        # =============================
-        # SAVE AS PROCESSED
-        # =============================
+        # ---------------------------------
+        # SAVE SUCCESS
+        # ---------------------------------
 
         if file_unique_id:
 
@@ -422,10 +579,6 @@ async def handle_file(
                 file_size=uploaded_size,
             )
 
-        # =============================
-        # UPDATE STATISTICS
-        # =============================
-
         increment_stat("uploaded")
 
         increment_stat(
@@ -433,11 +586,11 @@ async def handle_file(
             uploaded_size,
         )
 
-        # =============================
-        # SUCCESS
-        # =============================
+        # ---------------------------------
+        # SUCCESS MESSAGE
+        # ---------------------------------
 
-        await status.edit_text(
+        await status_message.edit_text(
             f"✅ Uploaded successfully!\n\n"
             f"📄 {result['name']}\n"
             f"📦 {uploaded_size / 1024 / 1024:.2f} MB"
@@ -452,11 +605,62 @@ async def handle_file(
 
         increment_stat("failed")
 
-        await status.edit_text(
-            "❌ Upload failed.\n\n"
-            "The file was not marked as uploaded, "
-            "so you can send it again."
-        )
+        if status_message:
+
+            try:
+
+                await status_message.edit_text(
+                    "❌ Upload failed.\n\n"
+                    f"📄 {filename}\n\n"
+                    "The file was not marked as uploaded."
+                )
+
+            except Exception:
+                pass
+
+    finally:
+
+        # ---------------------------------
+        # Remove from in-progress
+        # ---------------------------------
+
+        if file_unique_id:
+
+            async with in_progress_lock:
+
+                in_progress.discard(
+                    file_unique_id
+                )
+
+
+# =========================
+# QUEUE WORKER
+# =========================
+
+async def queue_worker(worker_number):
+
+    print(
+        f"Queue worker {worker_number} started."
+    )
+
+    while True:
+
+        item = await file_queue.get()
+
+        try:
+
+            await process_file(item)
+
+        except Exception as e:
+
+            print(
+                f"WORKER {worker_number} ERROR:",
+                repr(e),
+            )
+
+        finally:
+
+            file_queue.task_done()
 
 
 # =========================
@@ -477,20 +681,38 @@ async def unknown_message(
 
 
 # =========================
+# START QUEUE WORKERS
+# =========================
+
+async def post_init(application):
+
+    global workers
+
+    for i in range(WORKER_COUNT):
+
+        worker = asyncio.create_task(
+            queue_worker(i + 1)
+        )
+
+        workers.append(worker)
+
+
+# =========================
 # MAIN
 # =========================
 
 def main():
 
-    # Initialize database
     get_db()
 
     app = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
+        .post_init(post_init)
         .build()
     )
 
+    # Commands
     app.add_handler(
         CommandHandler(
             "start",
@@ -506,6 +728,14 @@ def main():
     )
 
     app.add_handler(
+        CommandHandler(
+            "status",
+            status,
+        )
+    )
+
+    # Files
+    app.add_handler(
         MessageHandler(
             filters.AUDIO
             | filters.Document.ALL
@@ -514,6 +744,7 @@ def main():
         )
     )
 
+    # Everything else
     app.add_handler(
         MessageHandler(
             filters.ALL,
