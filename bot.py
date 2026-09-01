@@ -2311,398 +2311,104 @@ async def file_received(
     context,
 ):
 
-    if not is_allowed(
-        update
-    ):
+    if not is_allowed(update):
         return
 
+    message = update.message
+
+    file_info = get_file_info(message)
+
+    if not file_info:
+        return
+
+    (
+        filename,
+        _,
+        size,
+        _,
+    ) = file_info
+
+    app = context.application
+
+    state = app.bot_data["state_manager"]
+    jobs = app.bot_data["jobs"]
+
+    user_id = update.effective_user.id
+    message_id = message.message_id
+
+    key = (
+        user_id,
+        message_id,
+    )
+
+    if key in jobs:
+        return
+
+    job = Job(
+        user_id,
+        message_id,
+        filename,
+        size,
+    )
+
+    jobs[key] = job
+
     print(
-        "Bot API received "
-        "file message:",
-        update.message.message_id,
+        "Bot API received file:",
+        filename,
+        "message:",
+        message_id,
+        "size:",
+        size,
+    )
+
+    if size > LARGE_FILE_BYTES:
+        semaphore = app.bot_data["large_sem"]
+    else:
+        semaphore = app.bot_data["small_sem"]
+
+    async def run_one():
+
+        try:
+
+            async with semaphore:
+
+                result = await process_message(
+                    app,
+                    state,
+                    app.bot_data["telethon"],
+                    message,
+                    job,
+                )
+
+            if result == "failed":
+                print(
+                    "File processing failed:",
+                    filename,
+                )
+
+        except Exception as error:
+
+            print(
+                "File worker error:",
+                repr(error),
+            )
+
+        finally:
+
+            jobs.pop(
+                key,
+                None,
+            )
+
+    asyncio.create_task(
+        run_one()
     )
 
 
 # ============================================================
 # FIRST-RUN INITIALIZATION
-# ============================================================
-
-async def initialize_user(
-    client,
-    state,
-    user_id,
-):
-
-    key = str(
-        user_id
-    )
-
-    if (
-        key
-        in state.state[
-            "initialized_users"
-        ]
-        and
-        key
-        in state.state[
-            "last_message_ids"
-        ]
-    ):
-
-        return
-
-    # Compatibility with old state
-    old = (
-        state.state[
-            "last_message_ids"
-        ].get(
-            "legacy"
-        )
-    )
-
-    if (
-        old is not None
-        and
-        key == str(
-            556318583
-        )
-    ):
-
-        state.state[
-            "last_message_ids"
-        ][key] = int(old)
-
-        state.state[
-            "initialized_users"
-        ].append(key)
-
-        await state.save()
-
-        return
-
-    cutoff = (
-        datetime.now(
-            timezone.utc
-        )
-        - timedelta(
-            hours=INITIAL_RECOVERY_HOURS
-        )
-    )
-
-    messages = (
-        await client.get_messages(
-            user_id,
-            limit=5000,
-        )
-    )
-
-    eligible = []
-
-    for message in messages:
-
-        if not message.date:
-            continue
-
-        message_date = (
-            message.date
-        )
-
-        if (
-            message_date.tzinfo
-            is None
-        ):
-
-            message_date = (
-                message_date.replace(
-                    tzinfo=timezone.utc
-                )
-            )
-
-        if (
-            message_date
-            < cutoff
-        ):
-            continue
-
-        if (
-            int(
-                message.sender_id
-                or 0
-            )
-            != int(user_id)
-        ):
-            continue
-
-        if get_file_info(
-            message
-        ):
-
-            eligible.append(
-                message
-            )
-
-    if eligible:
-
-        first_id = min(
-            message.id
-            for message
-            in eligible
-        )
-
-        state.state[
-            "last_message_ids"
-        ][key] = (
-            first_id - 1
-        )
-
-        print(
-            f"User {user_id}: "
-            f"found "
-            f"{len(eligible)} "
-            f"recent file(s)."
-        )
-
-    else:
-
-        state.state[
-            "last_message_ids"
-        ][key] = max(
-            (
-                message.id
-                for message
-                in messages
-            ),
-            default=0,
-        )
-
-    if key not in (
-        state.state[
-            "initialized_users"
-        ]
-    ):
-
-        state.state[
-            "initialized_users"
-        ].append(key)
-
-    await state.save()
-    # ============================================================
-# WORKER
-# ============================================================
-
-async def worker_loop(
-    app,
-):
-
-    state = (
-        app.bot_data[
-            "state_manager"
-        ]
-    )
-
-    client = (
-        app.bot_data[
-            "telethon"
-        ]
-    )
-
-    jobs = (
-        app.bot_data[
-            "jobs"
-        ]
-    )
-
-    retry_after = {}
-
-    while True:
-
-        try:
-
-            for user_id in (
-                ALLOWED_TELEGRAM_IDS
-            ):
-
-                await initialize_user(
-                    client,
-                    state,
-                    user_id,
-                )
-
-                last_id = int(
-                    state.state[
-                        "last_message_ids"
-                    ].get(
-                        str(user_id),
-                        0,
-                    )
-                )
-
-                messages = (
-                    await client.get_messages(
-                        user_id,
-                        limit=100,
-                        min_id=last_id,
-                    )
-                )
-
-                for message in sorted(
-                    messages,
-                    key=lambda item:
-                    item.id,
-                ):
-
-                    # Ignore messages that were not sent
-                    # by the allowed user.
-                    if (
-                        int(
-                            message.sender_id
-                            or 0
-                        )
-                        != user_id
-                    ):
-
-                        mark_message_complete(
-                            state,
-                            user_id,
-                            message.id,
-                        )
-
-                        await state.save()
-
-                        continue
-
-                    file_info = (
-                        get_file_info(
-                            message
-                        )
-                    )
-
-                    # Normal text/command message
-                    if not file_info:
-
-                        mark_message_complete(
-                            state,
-                            user_id,
-                            message.id,
-                        )
-
-                        await state.save()
-
-                        continue
-
-                    key = (
-                        user_id,
-                        message.id,
-                    )
-
-                    # Already running
-                    if key in jobs:
-                        continue
-
-                    # Waiting for retry
-                    if (
-                        key in retry_after
-                        and
-                        time.monotonic()
-                        < retry_after[key]
-                    ):
-                        continue
-
-                    (
-                        filename,
-                        _,
-                        size,
-                        _,
-                    ) = file_info
-
-                    job = Job(
-                        user_id,
-                        message.id,
-                        filename,
-                        size,
-                    )
-
-                    jobs[key] = job
-
-                    async def run_one(
-                        job=job,
-                        message=message,
-                        key=key,
-                    ):
-
-                        if (
-                            job.size
-                            > LARGE_FILE_BYTES
-                        ):
-
-                            semaphore = (
-                                app.bot_data[
-                                    "large_sem"
-                                ]
-                            )
-
-                        else:
-
-                            semaphore = (
-                                app.bot_data[
-                                    "small_sem"
-                                ]
-                            )
-
-                        async with semaphore:
-
-                            result = (
-                                await process_message(
-                                    app,
-                                    state,
-                                    client,
-                                    message,
-                                    job,
-                                )
-                            )
-
-                        jobs.pop(
-                            key,
-                            None,
-                        )
-
-                        if (
-                            result
-                            == "failed"
-                        ):
-
-                            retry_after[
-                                key
-                            ] = (
-                                time.monotonic()
-                                + RETRY_DELAY_SECONDS
-                            )
-
-                    asyncio.create_task(
-                        run_one()
-                    )
-
-            await state.save()
-
-            await asyncio.sleep(
-                PROCESS_INTERVAL_SECONDS
-            )
-
-        except asyncio.CancelledError:
-
-            return
-
-        except Exception as error:
-
-            print(
-                "Worker error:",
-                repr(error),
-            )
-
-            await asyncio.sleep(
-                5
-            )
-
+#
 
 # ============================================================
 # APPLICATION STARTUP
@@ -2817,12 +2523,7 @@ async def post_init(
         ),
     ])
 
-    # Start worker after application startup
-    app.bot_data[
-        "worker_task"
-    ] = asyncio.create_task(
-        worker_loop(app)
-    )
+    
 
     print(
         "Bot started."
@@ -2845,23 +2546,7 @@ async def post_shutdown(
     app,
 ):
 
-    worker = (
-        app.bot_data.get(
-            "worker_task"
-        )
-    )
-
-    if worker:
-
-        worker.cancel()
-
-        try:
-
-            await worker
-
-        except asyncio.CancelledError:
-
-            pass
+    
 
     client = (
         app.bot_data.get(
