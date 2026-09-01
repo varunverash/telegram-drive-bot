@@ -1108,3 +1108,664 @@ async def initialize_state(
     )
 
     await state_manager.save()
+    # ============================================================
+# PROCESS ONE FILE
+# ============================================================
+
+async def process_message(
+    application,
+    state_manager,
+    telethon_client,
+    message,
+):
+
+    message_id = message.id
+
+    # --------------------------------------------------------
+    # Allowed users only
+    # --------------------------------------------------------
+
+    if (
+        message.sender_id
+        not in ALLOWED_TELEGRAM_IDS
+    ):
+
+        state_manager.set(
+            "last_message_id",
+            message_id,
+        )
+
+        await state_manager.save()
+
+        return True
+
+    # --------------------------------------------------------
+    # Get file information
+    # --------------------------------------------------------
+
+    file_info = (
+        get_telegram_file_info(
+            message
+        )
+    )
+
+    if not file_info:
+
+        state_manager.set(
+            "last_message_id",
+            message_id,
+        )
+
+        await state_manager.save()
+
+        return True
+
+    (
+        filename,
+        mime_type,
+        expected_size,
+        telegram_file_id,
+    ) = file_info
+
+    state_manager.increment(
+        "sent"
+    )
+
+    await state_manager.save()
+
+    bot = application.bot
+
+    chat_id = message.sender_id
+
+    # --------------------------------------------------------
+    # DUPLICATE CHECK
+    # --------------------------------------------------------
+
+    duplicate = await asyncio.to_thread(
+        find_drive_duplicate_sync,
+        telegram_file_id,
+        filename,
+        expected_size,
+    )
+
+    if duplicate:
+
+        state_manager.increment(
+            "duplicates"
+        )
+
+        state_manager.set(
+            "last_message_id",
+            message_id,
+        )
+
+        await state_manager.save()
+
+        try:
+
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "⏭️ Duplicate skipped!\n\n"
+                    f"📄 {filename}\n\n"
+                    "Already exists in "
+                    "Google Drive."
+                ),
+                reply_to_message_id=message_id,
+                allow_sending_without_reply=True,
+            )
+
+        except Exception:
+            pass
+
+        print(
+            f"DUPLICATE: {filename}"
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # STATUS
+    # --------------------------------------------------------
+
+    try:
+
+        status = await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "⬇️ Downloading:\n"
+                f"{filename}\n\n"
+                f"📦 "
+                f"{expected_size / 1024 / 1024:.2f} MB"
+            ),
+            reply_to_message_id=message_id,
+            allow_sending_without_reply=True,
+        )
+
+    except Exception:
+
+        status = None
+
+    temp_path = None
+
+    try:
+
+        # ----------------------------------------------------
+        # TEMPORARY FILE
+        # ----------------------------------------------------
+
+        suffix = (
+            Path(filename).suffix
+            or ".tmp"
+        )
+
+        with tempfile.NamedTemporaryFile(
+            prefix="telegram_",
+            suffix=suffix,
+            delete=False,
+        ) as temp_file:
+
+            temp_path = temp_file.name
+
+        # ----------------------------------------------------
+        # TELEGRAM DOWNLOAD
+        # ----------------------------------------------------
+
+        print(
+            f"Downloading: {filename}"
+        )
+
+        downloaded_path = (
+            await telethon_client.download_media(
+                message,
+                file=temp_path,
+            )
+        )
+
+        if not downloaded_path:
+
+            raise RuntimeError(
+                "Telegram download failed."
+            )
+
+        actual_size = os.path.getsize(
+            downloaded_path
+        )
+
+        # ----------------------------------------------------
+        # Size verification
+        #
+        # Photos may not have a reliable size in Telegram,
+        # so only check when expected_size > 0.
+        # ----------------------------------------------------
+
+        if (
+            expected_size > 0
+            and actual_size != expected_size
+        ):
+
+            raise RuntimeError(
+                "Downloaded file size does "
+                "not match Telegram size."
+            )
+
+        state_manager.increment(
+            "downloaded"
+        )
+
+        state_manager.increment(
+            "downloaded_bytes",
+            actual_size,
+        )
+
+        await state_manager.save()
+
+        # ----------------------------------------------------
+        # UPDATE STATUS
+        # ----------------------------------------------------
+
+        if status:
+
+            try:
+
+                await status.edit_text(
+                    "⬆️ Uploading to Google Drive:\n"
+                    f"{filename}\n\n"
+                    f"📦 "
+                    f"{actual_size / 1024 / 1024:.2f} MB\n"
+                    "🔄 Resumable upload..."
+                )
+
+            except Exception:
+                pass
+
+        # ----------------------------------------------------
+        # DRIVE UPLOAD
+        # ----------------------------------------------------
+
+        print(
+            f"Uploading: {filename}"
+        )
+
+        result = await asyncio.to_thread(
+            upload_file_to_drive_sync,
+            downloaded_path,
+            filename,
+            mime_type,
+            telegram_file_id,
+        )
+
+        uploaded_size = int(
+            result.get(
+                "size",
+                actual_size,
+            )
+        )
+
+        # ----------------------------------------------------
+        # SUCCESS
+        # ----------------------------------------------------
+
+        state_manager.increment(
+            "uploaded"
+        )
+
+        state_manager.increment(
+            "uploaded_bytes",
+            uploaded_size,
+        )
+
+        state_manager.set(
+            "last_message_id",
+            message_id,
+        )
+
+        await state_manager.save()
+
+        if status:
+
+            try:
+
+                await status.edit_text(
+                    "✅ Uploaded successfully!\n\n"
+                    f"📄 {result['name']}\n"
+                    f"📦 "
+                    f"{uploaded_size / 1024 / 1024:.2f} MB"
+                )
+
+            except Exception:
+                pass
+
+        print(
+            f"SUCCESS: {filename}"
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            f"ERROR processing "
+            f"{filename}: {repr(e)}"
+        )
+
+        state_manager.increment(
+            "failed"
+        )
+
+        await state_manager.save()
+
+        if status:
+
+            try:
+
+                await status.edit_text(
+                    "❌ Upload failed!\n\n"
+                    f"📄 {filename}\n\n"
+                    "It will be retried."
+                )
+
+            except Exception:
+                pass
+
+        return False
+
+    finally:
+
+        # ----------------------------------------------------
+        # DELETE TEMPORARY FILE
+        # ----------------------------------------------------
+
+        if temp_path:
+
+            try:
+
+                if os.path.exists(
+                    temp_path
+                ):
+
+                    os.remove(
+                        temp_path
+                    )
+
+            except Exception as e:
+
+                print(
+                    "Temporary cleanup error:",
+                    repr(e),
+                )
+
+
+# ============================================================
+# SINGLE FILE WORKER
+# ============================================================
+
+async def processing_worker(
+    application,
+    state_manager,
+    telethon_client,
+    bot_chat,
+):
+
+    print(
+        "Single-file worker started."
+    )
+
+    while True:
+
+        try:
+
+            last_id = state_manager.get(
+                "last_message_id",
+                0,
+            )
+
+            messages = (
+                await telethon_client.get_messages(
+                    bot_chat,
+                    limit=100,
+                    min_id=last_id,
+                    reverse=True,
+                )
+            )
+
+            if not messages:
+
+                await asyncio.sleep(
+                    PROCESS_INTERVAL_SECONDS
+                )
+
+                continue
+
+            for message in messages:
+
+                if message.id <= last_id:
+                    continue
+
+                success = (
+                    await process_message(
+                        application,
+                        state_manager,
+                        telethon_client,
+                        message,
+                    )
+                )
+
+                if not success:
+
+                    await asyncio.sleep(
+                        10
+                    )
+
+                    break
+
+                last_id = (
+                    state_manager.get(
+                        "last_message_id",
+                        last_id,
+                    )
+                )
+
+        except FloodWaitError as e:
+
+            print(
+                "Telegram requested wait:",
+                e.seconds,
+                "seconds",
+            )
+
+            await asyncio.sleep(
+                e.seconds
+            )
+
+        except Exception as e:
+
+            print(
+                "Worker error:",
+                repr(e),
+            )
+
+            await asyncio.sleep(
+                10
+            )
+
+
+# ============================================================
+# STARTUP
+# ============================================================
+
+async def post_init(
+    application: Application,
+):
+
+    print(
+        "Starting Telegram MTProto..."
+    )
+
+    # --------------------------------------------------------
+    # STATE
+    # --------------------------------------------------------
+
+    state_manager = StateManager()
+
+    await state_manager.load()
+
+    application.bot_data[
+        "state_manager"
+    ] = state_manager
+
+    # --------------------------------------------------------
+    # TELETHON
+    # --------------------------------------------------------
+
+    telethon_client = TelegramClient(
+        TELEGRAM_SESSION,
+        TELEGRAM_API_ID,
+        TELEGRAM_API_HASH,
+    )
+
+    await telethon_client.connect()
+
+    if not await (
+        telethon_client.is_user_authorized()
+    ):
+
+        raise RuntimeError(
+            "Telegram session is not authorized."
+        )
+
+    me = await (
+        telethon_client.get_me()
+    )
+
+    print(
+        "Telethon logged in as:",
+        getattr(
+            me,
+            "username",
+            None,
+        )
+        or getattr(
+            me,
+            "first_name",
+            None,
+        )
+        or me.id,
+    )
+
+    # --------------------------------------------------------
+    # BOT CHAT
+    # --------------------------------------------------------
+
+    bot_chat = await (
+        telethon_client.get_entity(
+            BOT_USERNAME
+        )
+    )
+
+    print(
+        "Monitoring:",
+        BOT_USERNAME,
+    )
+
+    # --------------------------------------------------------
+    # INITIALIZATION
+    # --------------------------------------------------------
+
+    await initialize_state(
+        state_manager,
+        telethon_client,
+        bot_chat,
+    )
+
+    application.bot_data[
+        "telethon_client"
+    ] = telethon_client
+
+    application.bot_data[
+        "bot_chat"
+    ] = bot_chat
+
+    # --------------------------------------------------------
+    # ONE WORKER
+    # --------------------------------------------------------
+
+    application.create_task(
+        processing_worker(
+            application,
+            state_manager,
+            telethon_client,
+            bot_chat,
+        ),
+        name="telegram-drive-worker",
+    )
+
+    print(
+        "Telegram → Google Drive bot is running."
+    )
+
+
+# ============================================================
+# SHUTDOWN
+# ============================================================
+
+async def post_shutdown(
+    application: Application,
+):
+
+    telethon_client = (
+        application.bot_data.get(
+            "telethon_client"
+        )
+    )
+
+    if telethon_client:
+
+        try:
+
+            await telethon_client.disconnect()
+
+        except Exception as e:
+
+            print(
+                "Telethon shutdown error:",
+                repr(e),
+            )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    app = (
+        Application.builder()
+        .token(
+            TELEGRAM_BOT_TOKEN
+        )
+        .post_init(
+            post_init
+        )
+        .post_shutdown(
+            post_shutdown
+        )
+        .build()
+    )
+
+    # --------------------------------------------------------
+    # COMMANDS
+    # --------------------------------------------------------
+
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "stats",
+            stats,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "status",
+            status_command,
+        )
+    )
+
+    # --------------------------------------------------------
+    # FILE DETECTION
+    # --------------------------------------------------------
+
+    app.add_handler(
+        MessageHandler(
+            filters.AUDIO
+            | filters.Document.ALL
+            | filters.VIDEO
+            | filters.PHOTO,
+            file_received,
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.ALL,
+            unknown_message,
+        )
+    )
+
+    print(
+        "Starting Telegram → Google Drive bot..."
+    )
+
+    app.run_polling()
+
+
+if __name__ == "__main__":
+
+    main()
