@@ -2329,7 +2329,6 @@ async def file_received(
     ) = file_info
 
     app = context.application
-
     state = app.bot_data["state_manager"]
     jobs = app.bot_data["jobs"]
 
@@ -2342,6 +2341,45 @@ async def file_received(
     )
 
     if key in jobs:
+        return
+
+    # --------------------------------------------------------
+    # Get the same message through Telethon.
+    #
+    # python-telegram-bot Message objects cannot be passed
+    # directly to Telethon download_media().
+    # --------------------------------------------------------
+
+    client = app.bot_data["telethon"]
+
+    telethon_messages = await client.get_messages(
+        BOT_USERNAME,
+        ids=message_id,
+    )
+
+    if not telethon_messages:
+        print(
+            "Could not find message through Telethon:",
+            message_id,
+        )
+        return
+
+    telethon_message = telethon_messages
+
+    # Safety check: make sure the message came from
+    # the same allowed user.
+    if (
+        int(
+            telethon_message.sender_id
+            or 0
+        )
+        != int(user_id)
+    ):
+        print(
+            "Sender mismatch:",
+            telethon_message.sender_id,
+            user_id,
+        )
         return
 
     job = Job(
@@ -2376,12 +2414,13 @@ async def file_received(
                 result = await process_message(
                     app,
                     state,
-                    app.bot_data["telethon"],
-                    message,
+                    client,
+                    telethon_message,
                     job,
                 )
 
             if result == "failed":
+
                 print(
                     "File processing failed:",
                     filename,
@@ -2394,6 +2433,21 @@ async def file_received(
                 repr(error),
             )
 
+            # Try to tell the user what happened
+            try:
+
+                await app.bot.send_message(
+                    user_id,
+                    (
+                        "❌ File processing failed.\n\n"
+                        f"📄 {filename}\n\n"
+                        f"{error}"
+                    ),
+                )
+
+            except Exception:
+                pass
+
         finally:
 
             jobs.pop(
@@ -2403,7 +2457,7 @@ async def file_received(
 
     asyncio.create_task(
         run_one()
-    )
+        )
 
 
 # ============================================================
