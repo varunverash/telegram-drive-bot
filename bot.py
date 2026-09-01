@@ -2446,6 +2446,9 @@ async def cancel_button(
 # ============================================================
 # BOT API FILE RECEIVED
 # ============================================================
+# ============================================================
+# BOT API FILE RECEIVED
+# ============================================================
 
 async def file_received(
     update,
@@ -2457,6 +2460,9 @@ async def file_received(
 
     message = update.message
 
+    if not message:
+        return
+
     file_info = get_file_info(message)
 
     if not file_info:
@@ -2464,17 +2470,24 @@ async def file_received(
 
     (
         filename,
-        _,
+        mime_type,
         size,
-        _,
+        file_id,
     ) = file_info
 
     app = context.application
+
     state = app.bot_data["state_manager"]
+
     jobs = app.bot_data["jobs"]
 
-    user_id = update.effective_user.id
-    message_id = message.message_id
+    user_id = int(
+        update.effective_user.id
+    )
+
+    message_id = int(
+        message.message_id
+    )
 
     key = (
         user_id,
@@ -2484,25 +2497,236 @@ async def file_received(
     if key in jobs:
         return
 
-    # --------------------------------------------------------
-    # Get the message through the Telegram USER session.
-    # --------------------------------------------------------
-
     client = app.bot_data["telethon"]
+
+    print(
+        "========================================"
+    )
+
+    print(
+        "📥 BOT API FILE RECEIVED"
+    )
+
+    print(
+        "Filename:",
+        filename,
+    )
+
+    print(
+        "Size:",
+        size,
+    )
+
+    print(
+        "Bot API message ID:",
+        message_id,
+    )
+
+    print(
+        "User ID:",
+        user_id,
+    )
+
+    print(
+        "========================================"
+    )
+
+    # ========================================================
+    # FIND THE TELETHON MESSAGE
+    #
+    # Do NOT depend on Bot API message_id == Telethon message.id
+    # ========================================================
+
+    telethon_message = None
 
     try:
 
-        telethon_message = await client.get_messages(
-            BOT_USERNAME,
-            ids=message_id,
+        print(
+            "Searching Telegram USER session..."
         )
+
+        # ----------------------------------------------------
+        # Search recent messages in the bot chat.
+        #
+        # We search by the user's sender ID and then compare
+        # the actual file information.
+        # ----------------------------------------------------
+
+        async for candidate in client.iter_messages(
+            BOT_USERNAME,
+            limit=200,
+        ):
+
+            try:
+
+                candidate_sender = int(
+                    candidate.sender_id or 0
+                )
+
+            except Exception:
+
+                candidate_sender = 0
+
+            if candidate_sender != user_id:
+                continue
+
+            # =================================================
+            # DOCUMENT / AUDIO / VIDEO
+            # =================================================
+
+            candidate_file = getattr(
+                candidate,
+                "file",
+                None,
+            )
+
+            if candidate_file:
+
+                candidate_name = (
+                    getattr(
+                        candidate_file,
+                        "name",
+                        None,
+                    )
+                    or ""
+                )
+
+                candidate_size = int(
+                    getattr(
+                        candidate_file,
+                        "size",
+                        0,
+                    )
+                    or 0
+                )
+
+                # ------------------------------------------------
+                # Best match: filename + size
+                # ------------------------------------------------
+
+                if (
+                    candidate_name
+                    and candidate_name == filename
+                    and (
+                        not size
+                        or candidate_size == int(size)
+                    )
+                ):
+
+                    telethon_message = candidate
+
+                    print(
+                        "✅ Telethon file found:"
+                    )
+
+                    print(
+                        "Telethon message ID:",
+                        candidate.id,
+                    )
+
+                    print(
+                        "Filename:",
+                        candidate_name,
+                    )
+
+                    print(
+                        "Size:",
+                        candidate_size,
+                    )
+
+                    break
+
+                # ------------------------------------------------
+                # Fallback: same filename
+                # ------------------------------------------------
+
+                if (
+                    candidate_name
+                    and candidate_name == filename
+                ):
+
+                    telethon_message = candidate
+
+                    print(
+                        "✅ Telethon file found by filename:"
+                    )
+
+                    print(
+                        "Telethon message ID:",
+                        candidate.id,
+                    )
+
+                    break
+
+            # =================================================
+            # PHOTO
+            # =================================================
+
+            candidate_photo = getattr(
+                candidate,
+                "photo",
+                None,
+            )
+
+            if candidate_photo:
+
+                # ------------------------------------------------
+                # A Telegram photo does not have the same
+                # filename as the Bot API generated filename.
+                #
+                # Therefore match by:
+                #
+                # 1. sender
+                # 2. recent message
+                # 3. photo presence
+                #
+                # We only use this fallback for photo messages.
+                # ------------------------------------------------
+
+                if getattr(
+                    message,
+                    "photo",
+                    None,
+                ):
+
+                    telethon_message = candidate
+
+                    print(
+                        "✅ Telethon photo found:"
+                    )
+
+                    print(
+                        "Telethon message ID:",
+                        candidate.id,
+                    )
+
+                    break
 
     except Exception as error:
 
         print(
-            "Telethon could not retrieve message:",
-            message_id,
+            "❌ Telethon search failed:",
             repr(error),
+        )
+
+    # ========================================================
+    # STILL NOT FOUND
+    # ========================================================
+
+    if not telethon_message:
+
+        print(
+            "❌ Telethon message could not be found."
+        )
+
+        print(
+            "Bot API message ID:",
+            message_id,
+        )
+
+        print(
+            "Filename:",
+            filename,
         )
 
         await app.bot.send_message(
@@ -2510,47 +2734,42 @@ async def file_received(
             (
                 "❌ Could not access the Telegram file.\n\n"
                 f"📄 {filename}\n\n"
-                "Please try sending the file again."
+                "Please send the file again."
             ),
         )
 
         return
 
-    if not telethon_message:
-
-        print(
-            "Telethon message not found:",
-            message_id,
-        )
-
-        await app.bot.send_message(
-            user_id,
-            (
-                "❌ Telegram file could not be found.\n\n"
-                f"📄 {filename}"
-            ),
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # Safety check
-    # --------------------------------------------------------
+    # ========================================================
+    # SAFETY CHECK
+    # ========================================================
 
     sender_id = int(
         telethon_message.sender_id
         or 0
     )
 
-    if sender_id != int(user_id):
+    if sender_id != user_id:
 
         print(
-            "Sender mismatch:",
+            "❌ Sender mismatch:"
+        )
+
+        print(
+            "Telethon sender:",
             sender_id,
+        )
+
+        print(
+            "Expected:",
             user_id,
         )
 
         return
+
+    # ========================================================
+    # CREATE JOB
+    # ========================================================
 
     job = Job(
         user_id,
@@ -2562,18 +2781,56 @@ async def file_received(
     jobs[key] = job
 
     print(
-        "Bot API received file:",
+        "========================================"
+    )
+
+    print(
+        "🚀 STARTING FILE PROCESSING"
+    )
+
+    print(
+        "Filename:",
         filename,
-        "message:",
+    )
+
+    print(
+        "Bot API message:",
         message_id,
-        "size:",
+    )
+
+    print(
+        "Telethon message:",
+        telethon_message.id,
+    )
+
+    print(
+        "Size:",
         size,
     )
 
+    print(
+        "========================================"
+    )
+
+    # ========================================================
+    # SELECT CONCURRENCY
+    # ========================================================
+
     if size > LARGE_FILE_BYTES:
-        semaphore = app.bot_data["large_sem"]
+
+        semaphore = (
+            app.bot_data["large_sem"]
+        )
+
     else:
-        semaphore = app.bot_data["small_sem"]
+
+        semaphore = (
+            app.bot_data["small_sem"]
+        )
+
+    # ========================================================
+    # PROCESS FILE
+    # ========================================================
 
     async def run_one():
 
@@ -2592,18 +2849,31 @@ async def file_received(
             if result == "failed":
 
                 print(
-                    "File processing failed:",
+                    "❌ File processing failed:",
                     filename,
                 )
+
+            else:
+
+                print(
+                    "✅ File processing completed:",
+                    filename,
+                )
+
+        except TransferCancelled:
+
+            print(
+                "🛑 Transfer cancelled:",
+                filename,
+            )
 
         except Exception as error:
 
             print(
-                "File worker error:",
+                "❌ File worker error:",
                 repr(error),
             )
 
-            # Try to tell the user what happened
             try:
 
                 await app.bot.send_message(
@@ -2615,8 +2885,12 @@ async def file_received(
                     ),
                 )
 
-            except Exception:
-                pass
+            except Exception as send_error:
+
+                print(
+                    "Could not send error message:",
+                    repr(send_error),
+                )
 
         finally:
 
@@ -2627,7 +2901,7 @@ async def file_received(
 
     asyncio.create_task(
         run_one()
-        )
+    )
 
 
 # ============================================================
