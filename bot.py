@@ -357,12 +357,10 @@ def find_drive_duplicate_sync(
     safe_name = escape_drive_value(
         filename
     )
-
     query = (
-        f"'{DRIVE_FOLDER_ID}' in parents "
-        f"and trashed = false "
-        f"and name = '{safe_name}' "
-        f"and size = {int(file_size)}"
+    f"'{DRIVE_FOLDER_ID}' in parents "
+    f"and trashed = false "
+    f"and name = '{safe_name}'"
     )
 
     result = (
@@ -378,13 +376,17 @@ def find_drive_duplicate_sync(
         .execute()
     )
 
-    files = result.get(
-        "files",
-        []
-    )
+ 
+files = result.get(
+    "files",
+    []
+)
 
-    return files[0] if files else None
+for file in files:
+    if int(file.get("size", 0)) == int(file_size):
+        return file
 
+return None
 
 # ============================================================
 # GOOGLE DRIVE UPLOAD
