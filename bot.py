@@ -310,6 +310,9 @@ def find_drive_duplicate_sync(
     # --------------------------------------------------------
     # Exact Telegram file ID check
     # --------------------------------------------------------
+# --------------------------------------------------------
+    # Exact Telegram file ID check
+    # --------------------------------------------------------
 
     if telegram_file_id:
 
@@ -331,9 +334,7 @@ def find_drive_duplicate_sync(
                 q=query,
                 spaces="drive",
                 pageSize=10,
-                fields=(
-                    "files(id,name,size)"
-                ),
+                fields="files(id,name,size)",
             )
             .execute()
         )
@@ -344,23 +345,21 @@ def find_drive_duplicate_sync(
         )
 
         if files:
-
             return files[0]
 
     # --------------------------------------------------------
-    # Compatibility check for files uploaded by
-    # your previous bot version.
-    #
-    # Filename + exact size.
+    # Compatibility check
+    # Filename + exact size
     # --------------------------------------------------------
 
     safe_name = escape_drive_value(
         filename
     )
+
     query = (
-    f"'{DRIVE_FOLDER_ID}' in parents "
-    f"and trashed = false "
-    f"and name = '{safe_name}'"
+        f"'{DRIVE_FOLDER_ID}' in parents "
+        f"and trashed = false "
+        f"and name = '{safe_name}'"
     )
 
     result = (
@@ -369,24 +368,22 @@ def find_drive_duplicate_sync(
             q=query,
             spaces="drive",
             pageSize=20,
-            fields=(
-                "files(id,name,size)"
-            ),
+            fields="files(id,name,size)",
         )
         .execute()
     )
 
- 
-files = result.get(
-    "files",
-    []
-)
+    files = result.get(
+        "files",
+        []
+    )
 
-for file in files:
-    if int(file.get("size", 0)) == int(file_size):
-        return file
+    for file in files:
+        if int(file.get("size", 0)) == int(file_size):
+            return file
 
-return None
+    return None
+    
 
 # ============================================================
 # GOOGLE DRIVE UPLOAD
