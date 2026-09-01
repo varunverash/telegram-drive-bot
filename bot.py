@@ -2344,42 +2344,71 @@ async def file_received(
         return
 
     # --------------------------------------------------------
-    # Get the same message through Telethon.
-    #
-    # python-telegram-bot Message objects cannot be passed
-    # directly to Telethon download_media().
+    # Get the message through the Telegram USER session.
     # --------------------------------------------------------
 
     client = app.bot_data["telethon"]
 
-    telethon_messages = await client.get_messages(
-        BOT_USERNAME,
-        ids=message_id,
-    )
+    try:
 
-    if not telethon_messages:
-        print(
-            "Could not find message through Telethon:",
-            message_id,
+        telethon_message = await client.get_messages(
+            BOT_USERNAME,
+            ids=message_id,
         )
+
+    except Exception as error:
+
+        print(
+            "Telethon could not retrieve message:",
+            message_id,
+            repr(error),
+        )
+
+        await app.bot.send_message(
+            user_id,
+            (
+                "❌ Could not access the Telegram file.\n\n"
+                f"📄 {filename}\n\n"
+                "Please try sending the file again."
+            ),
+        )
+
         return
 
-    telethon_message = telethon_messages
+    if not telethon_message:
 
-    # Safety check: make sure the message came from
-    # the same allowed user.
-    if (
-        int(
-            telethon_message.sender_id
-            or 0
+        print(
+            "Telethon message not found:",
+            message_id,
         )
-        != int(user_id)
-    ):
+
+        await app.bot.send_message(
+            user_id,
+            (
+                "❌ Telegram file could not be found.\n\n"
+                f"📄 {filename}"
+            ),
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # Safety check
+    # --------------------------------------------------------
+
+    sender_id = int(
+        telethon_message.sender_id
+        or 0
+    )
+
+    if sender_id != int(user_id):
+
         print(
             "Sender mismatch:",
-            telethon_message.sender_id,
+            sender_id,
             user_id,
         )
+
         return
 
     job = Job(
@@ -2472,13 +2501,20 @@ async def post_init(
     app,
 ):
 
+    print(
+        "Starting Telegram Drive Bot..."
+    )
+
     state = (
         StateManager()
     )
 
     await state.load()
 
+    # --------------------------------------------------------
     # Organize existing Drive files first
+    # --------------------------------------------------------
+
     moved = (
         await asyncio.to_thread(
             organize_drive_sync
@@ -2497,24 +2533,70 @@ async def post_init(
     )
 
     # --------------------------------------------------------
-    # Telethon now logs in as the BOT itself.
-    #
-    # This allows the bot to access the private chats
-    # of both allowed users.
+    # Telethon USER session
     # --------------------------------------------------------
+
+    print(
+        "Connecting Telethon user session..."
+    )
 
     client = TelegramClient(
         TELEGRAM_SESSION,
         TELEGRAM_API_ID,
         TELEGRAM_API_HASH,
+        connection_retries=3,
+        retry_delay=2,
+        timeout=15,
     )
 
-    await client.connect()
+    try:
+
+        await asyncio.wait_for(
+            client.connect(),
+            timeout=30,
+        )
+
+    except Exception as error:
+
+        print(
+            "Telethon connection failed:",
+            repr(error),
+        )
+
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+        raise
+
+    print(
+        "Telethon connected."
+    )
 
     if not await client.is_user_authorized():
+
+        await client.disconnect()
+
         raise RuntimeError(
-            "Telegram user session is not authorized."
+            "Telegram USER session is not authorized."
         )
+
+    me = await client.get_me()
+
+    print(
+        "Telethon account:",
+        me.id,
+        getattr(
+            me,
+            "username",
+            None,
+        ),
+    )
+
+    # --------------------------------------------------------
+    # Application state
+    # --------------------------------------------------------
 
     app.bot_data.update({
 
@@ -2526,20 +2608,17 @@ async def post_init(
 
         "jobs": {},
 
-        # Large files:
-        # maximum 1 simultaneously
         "large_sem": (
             asyncio.Semaphore(1)
         ),
 
-        # Small files:
-        # maximum 4 simultaneously
         "small_sem": (
             asyncio.Semaphore(
                 SMALL_CONCURRENCY
             )
         ),
     })
+
     # --------------------------------------------------------
     # Telegram command menu
     # --------------------------------------------------------
@@ -2576,8 +2655,6 @@ async def post_init(
             "Help",
         ),
     ])
-
-    
 
     print(
         "Bot started."
