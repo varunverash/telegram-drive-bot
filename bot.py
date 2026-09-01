@@ -362,7 +362,7 @@ def find_drive_duplicate_sync(
         f"'{DRIVE_FOLDER_ID}' in parents "
         f"and trashed = false "
         f"and name = '{safe_name}' "
-        f"and size = '{int(file_size)}'"
+        f"and size = {int(file_size)}"
     )
 
     result = (
