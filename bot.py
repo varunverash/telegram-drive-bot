@@ -49,7 +49,7 @@ TELEGRAM_API_HASH = os.environ[
 ]
 
 # New session name so the old session does not interfere
-TELEGRAM_SESSION = "drive_bot_mtproto"
+TELEGRAM_SESSION = "drive_bot_session"
 
 BOT_USERNAME = "Drivegesavemaadadu_bot"
 
@@ -2034,16 +2034,13 @@ async def status_command(
         )
 
         lines.append(
-            (
-                f"{icon} "
-                f"{job.filename}\n"
-                f"{progress_bar("
-                f"progress['done'], "
-                f"progress['total']"
-                f")} "
-                f"{percentage}%"
-            )
-        )
+    (
+        f"{icon} "
+        f"{job.filename}\n"
+        f"{progress_bar(progress['done'], progress['total'])} "
+        f"{percentage}%"
+    )
+)
 
     await update.message.reply_text(
         "\n\n".join(
