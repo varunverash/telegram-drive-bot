@@ -1664,10 +1664,7 @@ async def process_message(
             total,
         ):
 
-            nonlocal (
-                last_time,
-                last_done,
-            )
+            nonlocal last_time, last_done
 
             if job.cancel.is_set():
 
