@@ -28,9 +28,9 @@ jobs:
 
       - name: Restore Telegram session
         env:
-          TELEGRAM_SESSION_BASE64: ${{ secrets.TELEGRAM_SESSION_BASE64 }}
+          TELEGRAM_SESSION_B64: ${{ secrets.TELEGRAM_SESSION_B64 }}
         run: |
-          echo "$TELEGRAM_SESSION_BASE64" | base64 -d | gzip -d > drive_bot_session.session
+          echo "$TELEGRAM_SESSION_B64" | base64 -d | gzip -d > drive_bot_session.session
           chmod 600 drive_bot_session.session
 
       - name: Verify Telegram session
