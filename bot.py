@@ -1215,17 +1215,26 @@ def get_file_info(
     if not message:
         return None
 
+    # ========================================================
+    # PYTHON-TELEGRAM-BOT MESSAGE
+    # ========================================================
+
     # --------------------------------------------------------
-    # DOCUMENT / VIDEO / AUDIO
+    # DOCUMENT
     # --------------------------------------------------------
 
-    if message.document:
+    if getattr(message, "document", None):
 
-        document = (
-            message.document
+        document = message.document
+
+        filename = (
+            getattr(
+                document,
+                "file_name",
+                None,
+            )
+            or f"file_{message.id}"
         )
-
-        filename = None
 
         mime_type = (
             getattr(
@@ -1236,109 +1245,241 @@ def get_file_info(
             or "application/octet-stream"
         )
 
-        for attribute in (
-            getattr(
-                document,
-                "attributes",
-                [],
-            )
-            or []
-        ):
-
-            if (
-                hasattr(
-                    attribute,
-                    "file_name",
-                )
-                and attribute.file_name
-            ):
-
-                filename = (
-                    attribute.file_name
-                )
-
-                break
-
-        if not filename:
-
-            filename = (
-                f"file_{message.id}"
-            )
-
-        return (
-            filename,
-            mime_type,
-            int(
-                document.size
-                or 0
-            ),
-            str(
-                document.id
-            ),
-        )
-
-    # --------------------------------------------------------
-    # PHOTO
-    #
-    # IMPORTANT:
-    # We deliberately do NOT use message.file here.
-    #
-    # This fixes the previous:
-    #
-    # AttributeError:
-    # 'PhotoSize' object has no attribute 'location'
-    # --------------------------------------------------------
-
-    if message.photo:
-
-        photo = (
-            message.photo
-        )
-
-        sizes = (
-            getattr(
-                photo,
-                "sizes",
-                [],
-            )
-            or []
-        )
-
-        largest = (
-            max(
-                sizes,
-                key=lambda item:
-                getattr(
-                    item,
-                    "size",
-                    0,
-                )
-                or 0,
-            )
-            if sizes
-            else None
-        )
-
         size = int(
             getattr(
-                largest,
-                "size",
+                document,
+                "file_size",
                 0,
             )
             or 0
         )
 
+        file_id = (
+            getattr(
+                document,
+                "file_unique_id",
+                None,
+            )
+            or getattr(
+                document,
+                "file_id",
+                None,
+            )
+        )
+
+        return (
+            filename,
+            mime_type,
+            size,
+            str(file_id or ""),
+        )
+
+    # --------------------------------------------------------
+    # AUDIO
+    # --------------------------------------------------------
+
+    if getattr(message, "audio", None):
+
+        audio = message.audio
+
+        filename = (
+            getattr(
+                audio,
+                "file_name",
+                None,
+            )
+            or f"audio_{message.id}.mp3"
+        )
+
+        mime_type = (
+            getattr(
+                audio,
+                "mime_type",
+                None,
+            )
+            or "audio/mpeg"
+        )
+
+        size = int(
+            getattr(
+                audio,
+                "file_size",
+                0,
+            )
+            or 0
+        )
+
+        file_id = (
+            getattr(
+                audio,
+                "file_unique_id",
+                None,
+            )
+            or getattr(
+                audio,
+                "file_id",
+                None,
+            )
+        )
+
+        return (
+            filename,
+            mime_type,
+            size,
+            str(file_id or ""),
+        )
+
+    # --------------------------------------------------------
+    # VIDEO
+    # --------------------------------------------------------
+
+    if getattr(message, "video", None):
+
+        video = message.video
+
+        filename = (
+            getattr(
+                video,
+                "file_name",
+                None,
+            )
+            or f"video_{message.id}.mp4"
+        )
+
+        mime_type = (
+            getattr(
+                video,
+                "mime_type",
+                None,
+            )
+            or "video/mp4"
+        )
+
+        size = int(
+            getattr(
+                video,
+                "file_size",
+                0,
+            )
+            or 0
+        )
+
+        file_id = (
+            getattr(
+                video,
+                "file_unique_id",
+                None,
+            )
+            or getattr(
+                video,
+                "file_id",
+                None,
+            )
+        )
+
+        return (
+            filename,
+            mime_type,
+            size,
+            str(file_id or ""),
+        )
+
+    # ========================================================
+    # PHOTO
+    # ========================================================
+
+    if getattr(message, "photo", None):
+
+        photo = message.photo
+
+        # ----------------------------------------------------
+        # Bot API:
+        # message.photo is a tuple of PhotoSize objects.
+        # ----------------------------------------------------
+
+        if isinstance(
+            photo,
+            (tuple, list),
+        ):
+
+            if not photo:
+                return None
+
+            photo = photo[-1]
+
+            size = int(
+                getattr(
+                    photo,
+                    "file_size",
+                    0,
+                )
+                or 0
+            )
+
+            file_id = (
+                getattr(
+                    photo,
+                    "file_unique_id",
+                    None,
+                )
+                or getattr(
+                    photo,
+                    "file_id",
+                    None,
+                )
+            )
+
+            return (
+                f"photo_{message.id}.jpg",
+                "image/jpeg",
+                size,
+                str(file_id or ""),
+            )
+
+        # ----------------------------------------------------
+        # Telethon:
+        # message.photo is a Telethon Photo object.
+        # ----------------------------------------------------
+
+        photo_id = getattr(
+            photo,
+            "id",
+            None,
+        )
+
+        size = 0
+
+        sizes = getattr(
+            photo,
+            "sizes",
+            None,
+        )
+
+        if sizes:
+
+            for item in sizes:
+
+                item_size = getattr(
+                    item,
+                    "size",
+                    None,
+                )
+
+                if item_size:
+
+                    size = max(
+                        size,
+                        int(item_size),
+                    )
+
         return (
             f"photo_{message.id}.jpg",
             "image/jpeg",
             size,
-            str(
-                photo.id
-            ),
+            str(photo_id or ""),
         )
 
     return None
-
 
 # ============================================================
 # PERMISSION
