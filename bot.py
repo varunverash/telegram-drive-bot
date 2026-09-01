@@ -2497,48 +2497,22 @@ async def file_received(
 # APPLICATION STARTUP
 # ============================================================
 
-async def post_init(
-    app,
-):
+async def post_init(app):
 
-    print(
-        "Starting Telegram Drive Bot..."
-    )
+    print("========================================")
+    print("Telegram Drive Bot: STARTING")
+    print("========================================")
 
-    state = (
-        StateManager()
-    )
-
+    state = StateManager()
     await state.load()
 
-    # --------------------------------------------------------
-    # Organize existing Drive files first
-    # --------------------------------------------------------
-
-    moved = (
-        await asyncio.to_thread(
-            organize_drive_sync
-        )
-    )
-
-    print(
-        f"Drive organization moved "
-        f"{moved} file(s)."
-    )
-
-    folder_ids = (
-        await asyncio.to_thread(
-            get_folder_ids_sync
-        )
-    )
+    print("State loaded.")
 
     # --------------------------------------------------------
-    # Telethon USER session
+    # Connect Telethon USER session
     # --------------------------------------------------------
 
-    print(
-        "Connecting Telethon user session..."
-    )
+    print("Connecting Telethon user session...")
 
     client = TelegramClient(
         TELEGRAM_SESSION,
@@ -2550,16 +2524,13 @@ async def post_init(
     )
 
     try:
-
         await asyncio.wait_for(
             client.connect(),
             timeout=30,
         )
-
     except Exception as error:
-
         print(
-            "Telethon connection failed:",
+            "❌ Telethon connection failed:",
             repr(error),
         )
 
@@ -2570,16 +2541,14 @@ async def post_init(
 
         raise
 
-    print(
-        "Telethon connected."
-    )
+    print("✅ Telethon connected.")
 
     if not await client.is_user_authorized():
 
         await client.disconnect()
 
         raise RuntimeError(
-            "Telegram USER session is not authorized."
+            "❌ Telegram USER session is not authorized."
         )
 
     me = await client.get_me()
@@ -2587,12 +2556,23 @@ async def post_init(
     print(
         "Telethon account:",
         me.id,
-        getattr(
-            me,
-            "username",
-            None,
-        ),
+        getattr(me, "username", None),
     )
+
+    # --------------------------------------------------------
+    # Get Drive folders
+    #
+    # IMPORTANT:
+    # This happens AFTER Telegram/Telethon is connected.
+    # --------------------------------------------------------
+
+    print("Loading Google Drive folders...")
+
+    folder_ids = await asyncio.to_thread(
+        get_folder_ids_sync
+    )
+
+    print("✅ Google Drive folders ready.")
 
     # --------------------------------------------------------
     # Application state
@@ -2608,14 +2588,10 @@ async def post_init(
 
         "jobs": {},
 
-        "large_sem": (
-            asyncio.Semaphore(1)
-        ),
+        "large_sem": asyncio.Semaphore(1),
 
-        "small_sem": (
-            asyncio.Semaphore(
-                SMALL_CONCURRENCY
-            )
+        "small_sem": asyncio.Semaphore(
+            SMALL_CONCURRENCY
         ),
     })
 
@@ -2656,18 +2632,9 @@ async def post_init(
         ),
     ])
 
-    print(
-        "Bot started."
-    )
-
-    print(
-        "Large concurrency = 1"
-    )
-
-    print(
-        "Small concurrency = 4"
-    )
-
+    print("========================================")
+    print("✅ BOT STARTED SUCCESSFULLY")
+    print("========================================")
 
 # ============================================================
 # APPLICATION SHUTDOWN
