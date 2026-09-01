@@ -2747,10 +2747,13 @@ async def post_init(
         TELEGRAM_SESSION,
         TELEGRAM_API_ID,
         TELEGRAM_API_HASH,
-    )
+    
 
-    await client.start(
-        bot_token=TELEGRAM_BOT_TOKEN
+    await client.connect()
+
+if not await client.is_user_authorized():
+    raise RuntimeError(
+        "Telegram user session is not authorized."
     )
 
     app.bot_data.update({
