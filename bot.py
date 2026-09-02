@@ -3644,4 +3644,4 @@ def main():
 
 
 if __name__ == "__main__":
-    cleanup_music_duplicates_once()    
+    main() 
