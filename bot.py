@@ -2257,6 +2257,34 @@ async def stats(
         f"{human_bytes(state.get('uploaded_bytes', 0))}"
     )
 
+#quea# async def queue_command(update, context):
+    if not is_allowed(update):
+        return
+
+    jobs = context.application.bot_data["jobs"]
+
+    waiting = sum(
+        1
+        for job in jobs.values()
+        if getattr(job, "queued", False)
+    )
+
+    processing = len(jobs) - waiting
+
+    state = context.application.bot_data[
+        "state_manager"
+    ].state
+
+    await update.message.reply_text(
+        "📦 QUEUE STATUS\n\n"
+        f"⏳ Waiting: {waiting}\n"
+        f"⚙️ Processing: {processing}\n"
+        f"📦 Total active: {len(jobs)}\n\n"
+        f"📨 Files sent: {state.get('sent', 0)}\n"
+        f"☁️ Uploaded: {state.get('uploaded', 0)}\n"
+        f"⏭️ Duplicates: {state.get('duplicates', 0)}\n"
+        f"❌ Failed: {state.get('failed', 0)}"
+    )
 
 # ============================================================
 # /STATUS
@@ -2936,6 +2964,7 @@ async def file_received(
     job.mime_type = mime_type
     job.expected_size = size
     job.telegram_file_id = file_id
+    job.queued = True
 
     jobs[key] = job
 
@@ -2994,6 +3023,7 @@ async def file_received(
     async def run_one():
 
         try:
+           job.queued = False
 
             async with semaphore:
 
@@ -3297,6 +3327,13 @@ def main():
         )
     )
 
+    app.add_handler(
+    CommandHandler(
+        "queue",
+        queue_command,
+          )
+    )
+    
     app.add_handler(
         CommandHandler(
             "status",
