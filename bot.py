@@ -2979,7 +2979,7 @@ async def file_received(
 
         async for candidate in client.iter_messages(
             BOT_USERNAME,
-            limit=200,
+            limit=3000,
         ):
 
             try:
