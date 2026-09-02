@@ -1210,6 +1210,11 @@ def find_duplicate_sync(
 # DRY RUN ONLY
 # ============================================================
 
+# ============================================================
+# ONE-TIME MUSIC DUPLICATE CLEANUP
+# MOVE DUPLICATES TO GOOGLE DRIVE TRASH
+# ============================================================
+
 def cleanup_music_duplicates_once():
 
     service = get_drive_service()
@@ -1301,26 +1306,84 @@ def cleanup_music_duplicates_once():
     )
 
     print(
-        f"🗑️ Duplicate files: "
+        f"🗑️ Duplicate files to trash: "
         f"{duplicate_count}"
     )
 
-    print(
-        "\n⚠️ DRY RUN ONLY — "
-        "NO FILES WERE DELETED."
-    )
+    trashed = 0
 
     for group in duplicate_groups:
 
-        print("\n--- DUPLICATE GROUP ---")
+        # Keep the first file.
+        keep = group[0]
 
-        for drive_file in group:
+        print(
+            "\n✅ KEEP:",
+            keep.get("name"),
+            "|",
+            keep.get("id"),
+        )
 
-            print(
-                f"{drive_file.get('name')} "
-                f"| {drive_file.get('size')} "
-                f"| {drive_file.get('id')}"
+        # Move all remaining copies to Trash.
+        for duplicate in group[1:]:
+
+            file_id = duplicate.get(
+                "id"
             )
+
+            try:
+
+                service.files().update(
+                    fileId=file_id,
+                    body={
+                        "trashed": True
+                    },
+                ).execute()
+
+                trashed += 1
+
+                print(
+                    "🗑️ TRASHED:",
+                    duplicate.get("name"),
+                    "|",
+                    file_id,
+                )
+
+            except Exception as error:
+
+                print(
+                    "❌ FAILED TO TRASH:",
+                    duplicate.get("name"),
+                    "|",
+                    repr(error),
+                )
+
+    print(
+        "\n============================================================"
+    )
+
+    print(
+        f"🎵 Original music files: {len(files)}"
+    )
+
+    print(
+        f"🔁 Duplicate groups: "
+        f"{len(duplicate_groups)}"
+    )
+
+    print(
+        f"🗑️ Successfully trashed: "
+        f"{trashed}"
+    )
+
+    print(
+        f"✅ Music files remaining: "
+        f"{len(files) - trashed}"
+    )
+
+    print(
+        "============================================================"
+    )
   # ============================================================
 # GOOGLE DRIVE UPLOAD
 # ============================================================
