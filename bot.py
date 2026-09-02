@@ -106,6 +106,7 @@ DRIVE_CHUNK_SIZE = (
 
 # Telegram status message update interval
 STATUS_UPDATE_SECONDS = 2
+WORKFLOW_STARTED_AT = time.monotonic()
 
 # Retry failed files after this delay
 RETRY_DELAY_SECONDS = 10
@@ -2256,36 +2257,94 @@ async def stats(
         f"☁️ Uploaded: "
         f"{human_bytes(state.get('uploaded_bytes', 0))}"
     )
+#timerooooooooooo#
+#timerooooooooooo#
 
-#quea# async def queue_command(update, context):
-    if not is_allowed(update):
+async def timer_command(
+    update,
+    context,
+):
+
+    if not is_allowed(
+        update
+    ):
         return
 
-    jobs = context.application.bot_data["jobs"]
+    elapsed = int(
+        time.monotonic()
+        - WORKFLOW_STARTED_AT
+    )
+
+    hours, remainder = divmod(
+        elapsed,
+        3600
+    )
+
+    minutes, seconds = divmod(
+        remainder,
+        60
+    )
+
+    await update.message.reply_text(
+        "⏱️ WORKFLOW TIMER\n\n"
+        "🟢 Running\n"
+        f"⏳ Uptime: "
+        f"{hours}h {minutes}m {seconds}s"
+    )
+    #quea#
+
+async def queue_command(
+    update,
+    context,
+):
+
+    if not is_allowed(
+        update
+    ):
+        return
+
+    jobs = (
+        context.application
+        .bot_data["jobs"]
+    )
 
     waiting = sum(
         1
         for job in jobs.values()
-        if getattr(job, "queued", False)
+        if getattr(
+            job,
+            "queued",
+            False,
+        )
     )
 
-    processing = len(jobs) - waiting
+    processing = (
+        len(jobs)
+        - waiting
+    )
 
-    state = context.application.bot_data[
-        "state_manager"
-    ].state
+    state = (
+        context.application
+        .bot_data[
+            "state_manager"
+        ]
+        .state
+    )
 
     await update.message.reply_text(
         "📦 QUEUE STATUS\n\n"
         f"⏳ Waiting: {waiting}\n"
         f"⚙️ Processing: {processing}\n"
         f"📦 Total active: {len(jobs)}\n\n"
-        f"📨 Files sent: {state.get('sent', 0)}\n"
-        f"☁️ Uploaded: {state.get('uploaded', 0)}\n"
-        f"⏭️ Duplicates: {state.get('duplicates', 0)}\n"
-        f"❌ Failed: {state.get('failed', 0)}"
+        f"📨 Files sent: "
+        f"{state.get('sent', 0)}\n"
+        f"☁️ Uploaded: "
+        f"{state.get('uploaded', 0)}\n"
+        f"⏭️ Duplicates: "
+        f"{state.get('duplicates', 0)}\n"
+        f"❌ Failed: "
+        f"{state.get('failed', 0)}"
     )
-
 # ============================================================
 # /STATUS
 # ============================================================
@@ -3023,7 +3082,7 @@ async def file_received(
     async def run_one():
 
         try:
-           job.queued = False
+            job.queued = False
 
             async with semaphore:
 
@@ -3326,12 +3385,18 @@ def main():
             stats,
         )
     )
+    app.add_handler(
+        CommandHandler(
+            "timer",
+            timer_command,
+        )
+    )
 
     app.add_handler(
-    CommandHandler(
-        "queue",
-        queue_command,
-          )
+        CommandHandler(
+            "queue",
+            queue_command,
+        )
     )
     
     app.add_handler(
