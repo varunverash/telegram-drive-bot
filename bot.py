@@ -1016,6 +1016,8 @@ class Job:
 # ============================================================
 # DRIVE DUPLICATE CHECK
 # ============================================================
+# DRIVE DUPLICATE CHECK
+# ============================================================
 
 def find_duplicate_sync(
     folder_id,
@@ -1028,6 +1030,8 @@ def find_duplicate_sync(
 
     # --------------------------------------------------------
     # 1. Exact Telegram file ID
+    #
+    # This is the strongest duplicate check.
     # --------------------------------------------------------
 
     if telegram_file_id:
@@ -1057,30 +1061,18 @@ def find_duplicate_sync(
             return files[0]
 
     # --------------------------------------------------------
-    # 2. Compatibility check
+    # 2. Filename + size compatibility check
     #
-    # IMPORTANT:
-    # Do NOT put:
+    # We intentionally retrieve the files in the folder and
+    # compare names/sizes in Python.
     #
-    # size = 123456
-    #
-    # inside the Drive query.
-    #
-    # We search by filename and compare
-    # the size in Python.
+    # This allows us to handle small Telegram filename changes.
     # --------------------------------------------------------
-
-    safe_name = (
-        escape_drive_value(
-            filename
-        )
-    )
 
     query = (
         f"'{folder_id}' "
         f"in parents "
-        f"and trashed = false "
-        f"and name = '{safe_name}'"
+        f"and trashed = false"
     )
 
     files = list_all_files_sync(
@@ -1088,6 +1080,86 @@ def find_duplicate_sync(
         query,
         "files(id,name,size)",
     )
+
+    expected_size = int(
+        file_size or 0
+    )
+
+    # --------------------------------------------------------
+    # Normalize filename for comparison
+    #
+    # Examples:
+    #
+    # "My Song.mp3"
+    # "my_song.mp3"
+    # "MY-SONG.mp3"
+    #
+    # are treated as equivalent.
+    # --------------------------------------------------------
+
+    def normalize_filename(name):
+
+        name = str(
+            name or ""
+        ).strip().lower()
+
+        # Remove extension separately
+        # so .mp3 remains important.
+        if "." in name:
+
+            stem, extension = (
+                name.rsplit(
+                    ".",
+                    1
+                )
+            )
+
+            extension = (
+                extension.strip()
+            )
+
+        else:
+
+            stem = name
+            extension = ""
+
+        # Treat common separators as the same
+        for char in (
+            "_",
+            "-",
+            "(",
+            ")",
+            "[",
+            "]",
+            "{",
+            "}",
+            ",",
+        ):
+
+            stem = stem.replace(
+                char,
+                " ",
+            )
+
+        # Collapse repeated spaces
+        stem = " ".join(
+            stem.split()
+        )
+
+        return (
+            stem,
+            extension,
+        )
+
+    wanted_stem, wanted_ext = (
+        normalize_filename(
+            filename
+        )
+    )
+
+    # --------------------------------------------------------
+    # Compare every file in the destination folder
+    # --------------------------------------------------------
 
     for drive_file in files:
 
@@ -1098,12 +1170,35 @@ def find_duplicate_sync(
             or 0
         )
 
-        if (
-            drive_size
-            == int(
-                file_size or 0
+        # Size must match
+        if drive_size != expected_size:
+            continue
+
+        drive_name = (
+            drive_file.get(
+                "name"
             )
-        ):
+            or ""
+        )
+
+        drive_stem, drive_ext = (
+            normalize_filename(
+                drive_name
+            )
+        )
+
+        # Extension must match
+        if drive_ext != wanted_ext:
+            continue
+
+        # Normalized filename must match
+        if drive_stem == wanted_stem:
+
+            print(
+                "🔁 Duplicate found "
+                "by filename + size:",
+                drive_name,
+            )
 
             return drive_file
 
@@ -1799,13 +1894,202 @@ async def process_message(
 
         last_time = start_time
         last_done = 0
+# ============================================================
+# PROCESS ONE FILE
+# ============================================================
+
+async def process_message(
+    app,
+    state,
+    client,
+    message,
+    job,
+):
+
+    bot = app.bot
+
+    user_id = int(
+        job.user_id
+    )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Use the information captured from the BOT API message.
+    #
+    # Do NOT call get_file_info() on the Telethon photo here.
+    # Telegram photo sizes are different from the actual
+    # downloaded photo size.
+    # --------------------------------------------------------
+
+    filename = job.filename
+
+    mime_type = getattr(
+        job,
+        "mime_type",
+        None,
+    ) or "application/octet-stream"
+
+    expected_size = int(
+        getattr(
+            job,
+            "expected_size",
+            0,
+        )
+        or 0
+    )
+
+    telegram_file_id = (
+        getattr(
+            job,
+            "telegram_file_id",
+            None,
+        )
+        or ""
+    )
+
+    state.inc(
+        "sent"
+    )
+
+    await state.save()
+
+    # --------------------------------------------------------
+    # Determine destination folder
+    # --------------------------------------------------------
+
+    folder_type = (
+        classify_file(
+            filename,
+            mime_type,
+        )
+    )
+
+    folders = (
+        app.bot_data[
+            "folder_ids"
+        ]
+    )
+
+    target_folder = (
+        folders[
+            folder_type
+        ]
+    )
+
+    # --------------------------------------------------------
+    # Duplicate check
+    # --------------------------------------------------------
+
+    duplicate = (
+        await asyncio.to_thread(
+            find_duplicate_sync,
+            target_folder,
+            telegram_file_id,
+            filename,
+            expected_size,
+        )
+    )
+
+    if duplicate:
+
+        state.inc(
+            "duplicates"
+        )
+
+        mark_message_complete(
+            state,
+            user_id,
+            message.id,
+        )
+
+        await state.save()
+
+        await bot.send_message(
+            user_id,
+
+            (
+                "⏭️ Duplicate skipped!\n\n"
+                f"📄 {filename}\n\n"
+                f"Already exists in "
+                f"{SUBFOLDERS[folder_type]}."
+            ),
+        )
+
+        return "done"
+
+    # --------------------------------------------------------
+    # Status message
+    # --------------------------------------------------------
+
+    status = await bot.send_message(
+        user_id,
+
+        (
+            "⏳ Preparing...\n\n"
+            f"📄 {filename}"
+        ),
+
+        reply_to_message_id=(
+            message.id
+        ),
+
+        allow_sending_without_reply=True,
+    )
+
+    job.status_message = (
+        status
+    )
+
+    updater = (
+        asyncio.create_task(
+            update_status_loop(
+                bot,
+                job,
+            )
+        )
+    )
+
+    temp_path = None
+
+    try:
+
+        # ====================================================
+        # TEMPORARY FILE
+        # ====================================================
+
+        suffix = (
+            Path(filename).suffix
+            or ".tmp"
+        )
+
+        with tempfile.NamedTemporaryFile(
+            prefix="telegram_",
+            suffix=suffix,
+            delete=False,
+        ) as temp_file:
+
+            temp_path = (
+                temp_file.name
+            )
+
+        # ====================================================
+        # TELEGRAM DOWNLOAD
+        # ====================================================
+
+        start_time = (
+            time.monotonic()
+        )
+
+        last_time = start_time
+        last_done = 0
 
         def download_progress(
             done,
             total,
         ):
 
-            nonlocal last_time, last_done
+            nonlocal last_time
+            nonlocal last_done
 
             if job.cancel.is_set():
 
@@ -1832,6 +2116,7 @@ async def process_message(
                 total=int(
                     total
                     or expected_size
+                    or 0
                 ),
                 speed=speed,
             )
@@ -1847,10 +2132,20 @@ async def process_message(
             progress_callback=(
                 download_progress
             ),
-    )
-              # ====================================================
+        )
+
+        # ====================================================
         # VERIFY DOWNLOAD
         # ====================================================
+
+        if not os.path.exists(
+            temp_path
+        ):
+
+            raise RuntimeError(
+                "Telegram download did not "
+                "create a file."
+            )
 
         actual_size = (
             os.path.getsize(
@@ -1858,8 +2153,25 @@ async def process_message(
             )
         )
 
+        # ----------------------------------------------------
+        # IMPORTANT:
+        #
+        # Do NOT reject Telegram photos because their Bot API
+        # size does not equal Telethon's downloaded size.
+        #
+        # For normal files we still verify the size.
+        # ----------------------------------------------------
+
+        is_photo = (
+            mime_type == "image/jpeg"
+            and filename.startswith(
+                "photo_"
+            )
+        )
+
         if (
-            expected_size
+            not is_photo
+            and expected_size
             and actual_size
             != expected_size
         ):
@@ -1956,7 +2268,6 @@ async def process_message(
             "cancelled"
         )
 
-        # Cancelled files should NOT retry
         mark_message_complete(
             state,
             user_id,
@@ -2006,6 +2317,11 @@ async def process_message(
         )
 
         await state.save()
+
+        print(
+            "❌ process_message error:",
+            repr(error),
+        )
 
         try:
 
@@ -2772,13 +3088,18 @@ async def file_received(
     # ========================================================
 
     job = Job(
-        user_id,
-        message_id,
-        filename,
-        size,
-    )
+    user_id,
+    message_id,
+    filename,
+    size,
+)
 
-    jobs[key] = job
+job.filename = filename
+job.mime_type = mime_type
+job.expected_size = size
+job.telegram_file_id = file_id
+
+jobs[key] = job
 
     print(
         "========================================"
