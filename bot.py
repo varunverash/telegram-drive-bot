@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.error import RetryAfter
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ContextTypes, filters,
@@ -2040,24 +2041,38 @@ async def process_message(
     # Status message
     # --------------------------------------------------------
 
-    status = await bot.send_message(
-        user_id,
+    try:
+        status = await bot.send_message(
+            user_id,
+            (
+                "⏳ Preparing...\n\n"
+                f"📄 {filename}"
+            ),
+            reply_to_message_id=(
+                message.id
+            ),
+            allow_sending_without_reply=True,
+        )
 
-        (
-            "⏳ Preparing...\n\n"
-            f"📄 {filename}"
-        ),
+        job.status_message = status
 
-        reply_to_message_id=(
-            message.id
-        ),
+    except RetryAfter as error:
+        print(
+            "⚠️ FloodWait while sending "
+            "Preparing message:",
+            error.retry_after,
+            "seconds",
+        )
 
-        allow_sending_without_reply=True,
-    )
+        job.status_message = None
 
-    job.status_message = (
-        status
-    )
+    except Exception as error:
+        print(
+            "⚠️ Could not send Preparing message:",
+            repr(error),
+        )
+
+        job.status_message = None
 
     updater = (
         asyncio.create_task(
@@ -2242,6 +2257,8 @@ async def process_message(
         )
 
         # ====================================================
+      
+        # ====================================================
         # SUCCESS
         # ====================================================
 
@@ -2262,21 +2279,39 @@ async def process_message(
 
         await state.save()
 
-        await bot.edit_message_text(
-            chat_id=user_id,
-            message_id=(
-                status.message_id
-            ),
+        if job.status_message:
+            try:
 
-            text=(
-                "✅ Uploaded successfully!\n\n"
-                f"📄 {filename}\n"
-                f"📦 {human_bytes(uploaded_size)}"
-            ),
-        )
+                await bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=(
+                        job.status_message.message_id
+                    ),
+
+                    text=(
+                        "✅ Uploaded successfully!\n\n"
+                        f"📄 {filename}\n"
+                        f"📦 {human_bytes(uploaded_size)}"
+                    ),
+                )
+
+            except RetryAfter as error:
+                print(
+                    "⚠️ FloodWait while updating "
+                    "success message:",
+                    error.retry_after,
+                    "seconds",
+                    "|",
+                    filename,
+                )
+
+            except Exception as error:
+                print(
+                    "⚠️ Could not update success message:",
+                    repr(error),
+                )
 
         return "done"
-
     # ========================================================
     # USER CANCELLED
     # ========================================================
@@ -2295,22 +2330,23 @@ async def process_message(
 
         await state.save()
 
-        try:
+        if job.status_message:
+            try:
 
-            await bot.edit_message_text(
-                chat_id=user_id,
-                message_id=(
-                    status.message_id
-                ),
+                await bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=(
+                        job.status_message.message_id
+                    ),
 
-                text=(
-                    "🛑 Cancelled\n\n"
-                    f"📄 {filename}"
-                ),
-            )
+                    text=(
+                        "🛑 Cancelled\n\n"
+                        f"📄 {filename}"
+                    ),
+                )
 
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         return "cancelled"
 
@@ -2341,24 +2377,25 @@ async def process_message(
             "❌ process_message error:",
             repr(error),
         )
+        if job.status_message:
+            try:
 
-        try:
+                await bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=(
+                        job.status_message.message_id
+                    ),
 
-            await bot.edit_message_text(
-                chat_id=user_id,
-                message_id=(
-                    status.message_id
-                ),
+                    text=(
+                        "❌ Failed\n\n"
+                        f"📄 {filename}\n\n"
+                        f"{error}"
+                    ),
+                )
 
-                text=(
-                    "❌ Failed\n\n"
-                    f"📄 {filename}\n\n"
-                    f"{error}"
-                ),
-            )
+            except Exception:
+                pass
 
-        except Exception:
-            pass
 
         return "failed"
 
@@ -2979,6 +3016,7 @@ async def file_received(
 
         async for candidate in client.iter_messages(
             BOT_USERNAME,
+            from_user=user_id,
             limit=3000,
         ):
 
@@ -3299,6 +3337,16 @@ async def file_received(
                 filename,
             )
 
+        except RetryAfter as error:
+
+            print(
+                "⚠️ Telegram FloodWait:",
+                error.retry_after,
+                "seconds",
+                "|",
+                filename,
+            )
+
         except Exception as error:
 
             print(
@@ -3315,6 +3363,15 @@ async def file_received(
                         f"📄 {filename}\n\n"
                         f"{error}"
                     ),
+                )
+
+            except RetryAfter as send_error:
+
+                print(
+                    "⚠️ FloodWait while sending "
+                    "error message:",
+                    send_error.retry_after,
+                    "seconds",
                 )
 
             except Exception as send_error:
