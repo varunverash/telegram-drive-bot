@@ -1204,6 +1204,123 @@ def find_duplicate_sync(
             return drive_file
 
     return None
+
+# ============================================================
+# ONE-TIME MUSIC DUPLICATE CLEANUP
+# DRY RUN ONLY
+# ============================================================
+
+def cleanup_music_duplicates_once():
+
+    service = get_drive_service()
+
+    folders = get_folder_ids_sync()
+
+    music_folder_id = folders["music"]
+
+    query = (
+        f"'{music_folder_id}' in parents "
+        f"and trashed = false"
+    )
+
+    files = list_all_files_sync(
+        service,
+        query,
+        "files(id,name,size)",
+    )
+
+    print(
+        f"🎵 Music files found: {len(files)}"
+    )
+
+    groups = {}
+
+    for drive_file in files:
+
+        name = drive_file.get(
+            "name",
+            ""
+        )
+
+        size = int(
+            drive_file.get(
+                "size",
+                0
+            )
+            or 0
+        )
+
+        base, ext = os.path.splitext(
+            name
+        )
+
+        normalized = (
+            base.lower()
+            .replace("_", " ")
+            .replace("-", " ")
+            .replace("(", " ")
+            .replace(")", " ")
+            .replace("[", " ")
+            .replace("]", " ")
+            .replace("{", " ")
+            .replace("}", " ")
+            .replace(",", " ")
+        )
+
+        normalized = " ".join(
+            normalized.split()
+        )
+
+        key = (
+            normalized,
+            ext.lower(),
+            size,
+        )
+
+        groups.setdefault(
+            key,
+            []
+        ).append(
+            drive_file
+        )
+
+    duplicate_groups = [
+        group
+        for group in groups.values()
+        if len(group) > 1
+    ]
+
+    duplicate_count = sum(
+        len(group) - 1
+        for group in duplicate_groups
+    )
+
+    print(
+        f"🔁 Duplicate groups: "
+        f"{len(duplicate_groups)}"
+    )
+
+    print(
+        f"🗑️ Duplicate files: "
+        f"{duplicate_count}"
+    )
+
+    print(
+        "\n⚠️ DRY RUN ONLY — "
+        "NO FILES WERE DELETED."
+    )
+
+    for group in duplicate_groups:
+
+        print("\n--- DUPLICATE GROUP ---")
+
+        for drive_file in group:
+
+            print(
+                f"{drive_file.get('name')} "
+                f"| {drive_file.get('size')} "
+                f"| {drive_file.get('id')}"
+            )
   # ============================================================
 # GOOGLE DRIVE UPLOAD
 # ============================================================
@@ -2530,6 +2647,10 @@ async def help_command(
         "/status — current transfers\n"
 
         "/folders — Drive folder counts\n"
+        
+        "/queue — queue status\n"
+        
+        "/timer — workflow uptime\n"
 
         "/cancel — cancel your current transfer\n"
 
@@ -3273,6 +3394,15 @@ async def post_init(app):
             "stats",
             "Show statistics",
         ),
+        BotCommand(
+            "queue",
+            "Queue status",
+       ),
+
+       BotCommand(
+          "timer",
+          "Workflow uptime",
+        ),  
 
         BotCommand(
             "status",
@@ -3451,5 +3581,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-    
+    cleanup_music_duplicates_once()    
