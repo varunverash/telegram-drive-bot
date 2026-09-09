@@ -97,8 +97,8 @@ LARGE_FILE_BYTES = (
     200 * 1024 * 1024
 )
 
-# Up to 4 small files simultaneously
-SMALL_CONCURRENCY = 4
+# Up to 6 small files simultaneously
+SMALL_CONCURRENCY = 6
 
 # Google Drive resumable upload chunk
 DRIVE_CHUNK_SIZE = (
@@ -131,6 +131,7 @@ LEGACY_FOLDERS = {
     "Images": "image",
     "Image": "image",
     "Documents": "other",
+
 }
 
 
@@ -3492,7 +3493,7 @@ async def post_init(app):
 
         "jobs": {},
 
-        "large_sem": asyncio.Semaphore(1),
+        "large_sem": asyncio.Semaphore(3),
 
         "small_sem": asyncio.Semaphore(
             SMALL_CONCURRENCY
