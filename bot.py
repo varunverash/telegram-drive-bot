@@ -106,7 +106,7 @@ DRIVE_CHUNK_SIZE = (
 )
 
 # Telegram status message update interval
-STATUS_UPDATE_SECONDS = 2
+STATUS_UPDATE_SECONDS = 4
 WORKFLOW_STARTED_AT = time.monotonic()
 
 # Retry failed files after this delay
@@ -3493,7 +3493,7 @@ async def post_init(app):
 
         "jobs": {},
 
-        "large_sem": asyncio.Semaphore(6),
+        "large_sem": asyncio.Semaphore(10),
 
         "small_sem": asyncio.Semaphore(
             SMALL_CONCURRENCY
