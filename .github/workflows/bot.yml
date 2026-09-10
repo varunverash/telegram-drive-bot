@@ -40,6 +40,9 @@ jobs:
           ls -lh drive_bot_session.session
 
       - name: Run bot
+        id: bot
+        continue-on-error: true
+        timeout-minutes: 350
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
@@ -50,3 +53,23 @@ jobs:
         run: |
           echo "Starting bot.py..."
           python -u bot.py
+
+      - name: Wait before starting next workflow
+        if: always()
+        run: |
+          echo "Bot run has ended."
+          echo "Waiting 30 seconds before starting the next run..."
+          sleep 30
+
+      - name: Start next workflow
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Starting next Telegram Drive Bot workflow..."
+
+          gh workflow run bot.yml \
+            --repo "${{ github.repository }}" \
+            --ref main
+
+          echo "Next workflow requested successfully."
