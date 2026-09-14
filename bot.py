@@ -5,6 +5,11 @@ import asyncio
 import tempfile
 import time
 import threading
+try:
+    import cryptg
+    print("✅ cryptg acceleration is available.")
+except ImportError:
+    print("⚠️ cryptg is NOT installed — Telethon will use slower Python encryption.")
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
@@ -106,7 +111,7 @@ DRIVE_CHUNK_SIZE = (
 )
 
 # Telegram status message update interval
-STATUS_UPDATE_SECONDS = 3
+STATUS_UPDATE_SECONDS = 11
 WORKFLOW_STARTED_AT = time.monotonic()
 
 # Retry failed files after this delay
