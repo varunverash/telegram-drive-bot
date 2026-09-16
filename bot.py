@@ -3498,8 +3498,9 @@ async def post_init(app):
 
         "jobs": {},
 
-        "large_sem": asyncio.Semaphore(5),
+        "large_sem": asyncio.Semaphore(3),
 
+        
         "small_sem": asyncio.Semaphore(
             SMALL_CONCURRENCY
         ),
