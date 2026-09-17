@@ -2165,37 +2165,19 @@ async def process_message(
             last_done = int(
                 done
             )
-        # ====================================================
-        # TELEGRAM DOWNLOAD — OPTIMIZED TEST
-        # ====================================================
-
-        with open(temp_path, "wb") as f:
-
-            downloaded = 0
-
-            async for chunk in client.iter_download(
-                message.media,
-                request_size=512 * 1024,
-                chunk_size=512 * 1024,
-            ):
-
-                if job.cancel.is_set():
-
-                    raise TransferCancelled()
-
-                f.write(chunk)
-
-                downloaded += len(chunk)
-
-                download_progress(
-                    downloaded,
-                    expected_size,
-                )
-        
-
-        # ====================================================
+            # ====================================================
+            # TELEGRAM DOWNLOAD
+            # ===================================
+        await client.download_media(
+            message,
+            file=temp_path,
+            progress_callback=(
+                download_progress
+            ),
+        )
+ ===================================================
         # VERIFY DOWNLOAD
-        # ====================================================
+         # ====================================================
 
         if not os.path.exists(
             temp_path
