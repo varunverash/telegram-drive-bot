@@ -38,6 +38,7 @@ TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 ALLOWED_TELEGRAM_IDS = {
     556318583,
     5237041275,
+    8692999967,
     # Add more IDs here later:
     # 123456789,
 }
