@@ -3546,19 +3546,18 @@ async def post_init(app):
         getattr(me, "username", None),
     )
 
-        # --------------------------------------------------------
+    # --------------------------------------------------------
+    # Google Drive folders
+    # --------------------------------------------------------
 
-# --------------------------------------------------------
-# Google Drive folders
-# --------------------------------------------------------
+    print("Loading Google Drive folders...")
 
-print("Loading Google Drive folders...")
+    folder_ids = await asyncio.to_thread(
+        get_folder_ids_sync
+    )
 
-folder_ids = await asyncio.to_thread(
-    get_folder_ids_sync
-)
+    print("✅ Google Drive folders ready.")
 
-print("✅ Google Drive folders ready.")
     # --------------------------------------------------------
     # Application state
     # --------------------------------------------------------
@@ -3573,13 +3572,14 @@ print("✅ Google Drive folders ready.")
 
         "jobs": {},
 
-        "large_sem": asyncio.Semaphore(4),
+        "large_sem": asyncio.Semaphore(1),
 
-        
         "small_sem": asyncio.Semaphore(
             SMALL_CONCURRENCY
         ),
     })
+        
+
 
     # --------------------------------------------------------
     # Telegram command menu
