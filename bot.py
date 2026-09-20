@@ -3572,7 +3572,7 @@ async def post_init(app):
 
         "jobs": {},
 
-        "large_sem": asyncio.Semaphore(1),
+        "large_sem": asyncio.Semaphore(4),
 
         "small_sem": asyncio.Semaphore(
             SMALL_CONCURRENCY
@@ -3676,9 +3676,9 @@ async def start(
 
         "📦 Large-file support ON\n"
 
-        "⚡ Small files: up to 4 at once\n"
+        "⚡ Small files: up to 6 at once\n"
 
-        "🐢 Large files: 1 at a time\n\n"
+        "🐢 Large files: 4 at a time\n\n"
 
         "Use /help for commands."
     )
