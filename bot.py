@@ -3377,10 +3377,12 @@ async def file_received(
     )
 
     print(
-        "Telethon message:",
-        telethon_message.id,
+    "Telethon message:",
+    telethon_message.id
+    if telethon_message
+    else "Not used (Bot API)",
     )
-
+    
     print(
         "Size:",
         size,
