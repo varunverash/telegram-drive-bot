@@ -3575,7 +3575,7 @@ async def post_init(app):
 
     bridge_found = False
 
-    for dialog:
+    for dialog in dialogs:
 
         name = (
             getattr(dialog, "name", "")
