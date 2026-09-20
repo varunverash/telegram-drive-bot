@@ -2160,7 +2160,7 @@ async def process_message(
                 progress_callback=download_progress,
             )
 
-        else:
+        else:  
 
             # Small file → use Bot API
             print("📥 Small file → using Bot API")
@@ -2169,6 +2169,10 @@ async def process_message(
                 raise RuntimeError(
                     "Telegram file_id is missing."
                 )
+
+            # ----------------------------------------------------
+            # BOT API DOWNLOAD
+            # ----------------------------------------------------
 
             job.progress.update(
                 stage="download",
@@ -2187,10 +2191,9 @@ async def process_message(
                 custom_path=temp_path
             )
 
-            elapsed = max(
-                time.monotonic() - download_start,
-                0.001,
-            )
+            # ----------------------------------------------------
+            # UPDATE PROGRESS AFTER DOWNLOAD
+            # ----------------------------------------------------
 
             actual_downloaded = (
                 os.path.getsize(temp_path)
@@ -2198,11 +2201,20 @@ async def process_message(
                 else 0
             )
 
+            elapsed = max(
+                time.monotonic() - download_start,
+                0.001,
+            )
+
+            average_speed = (
+                actual_downloaded / elapsed
+            )
+
             job.progress.update(
                 stage="download",
                 done=actual_downloaded,
                 total=expected_size or actual_downloaded,
-                speed=actual_downloaded / elapsed,
+                speed=average_speed,
             )
 
         # ========================================================
