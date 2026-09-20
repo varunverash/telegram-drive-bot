@@ -1542,7 +1542,7 @@ def get_file_info(
                 document,
                 "file_id",
                 None,
-            )
+
         )
 
         return (
