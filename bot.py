@@ -3565,27 +3565,24 @@ async def post_init(app):
         # --------------------------------------------------------
     # Find Telegram Bridge Group
     # --------------------------------------------------------
+        # --------------------------------------------------------
+    # DEBUG: SHOW TELEGRAM GROUPS
+    # --------------------------------------------------------
 
-    print("Searching for Drive Bot Bridge...")
+    print("🔎 Telegram groups visible to Telethon:")
 
     dialogs = await client.get_dialogs()
 
     for dialog in dialogs:
 
-        if dialog.name == "Drive Bot Bridge":
+        if dialog.is_group or dialog.is_channel:
 
             print(
-                "🌉 BRIDGE CHAT ID:",
+                "CHAT:",
+                repr(dialog.name),
+                "ID:",
                 dialog.id,
             )
-
-            break
-
-    else:
-
-        print(
-            "❌ Drive Bot Bridge was not found."
-        )
 
     # --------------------------------------------------------
     # Get Drive folders
