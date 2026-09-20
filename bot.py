@@ -1591,7 +1591,7 @@ def get_file_info(
                 audio,
                 "file_id",
                 None,
-            )
+
         )
 
         return (
@@ -1640,7 +1640,7 @@ def get_file_info(
                 video,
                 "file_id",
                 None,
-            )
+
         )
 
         return (
@@ -1686,7 +1686,7 @@ def get_file_info(
                     photo,
                     "file_id",
                     None,
-                )
+    
             )
 
             return (
