@@ -3562,6 +3562,31 @@ async def post_init(app):
         getattr(me, "username", None),
     )
 
+        # --------------------------------------------------------
+    # Find Telegram Bridge Group
+    # --------------------------------------------------------
+
+    print("Searching for Drive Bot Bridge...")
+
+    dialogs = await client.get_dialogs()
+
+    for dialog in dialogs:
+
+        if dialog.name == "Drive Bot Bridge":
+
+            print(
+                "🌉 BRIDGE CHAT ID:",
+                dialog.id,
+            )
+
+            break
+
+    else:
+
+        print(
+            "❌ Drive Bot Bridge was not found."
+        )
+
     # --------------------------------------------------------
     # Get Drive folders
     #
