@@ -3548,7 +3548,17 @@ async def post_init(app):
 
         # --------------------------------------------------------
 
+# --------------------------------------------------------
+# Google Drive folders
+# --------------------------------------------------------
 
+print("Loading Google Drive folders...")
+
+folder_ids = await asyncio.to_thread(
+    get_folder_ids_sync
+)
+
+print("✅ Google Drive folders ready.")
     # --------------------------------------------------------
     # Application state
     # --------------------------------------------------------
