@@ -2168,21 +2168,72 @@ async def process_message(
             )
             # ====================================================
             # TELEGRAM DOWNLOAD
-            # ===================================
-        await client.download_media(
-            message,
-            file=temp_path,
-            progress_callback=(
-                download_progress
-            ),
-        )
-             # ===================================================
-        # VERIFY DOWNLOAD
-         # ====================================================
 
-        if not os.path.exists(
-            temp_path
-        ):
+        # ========================================================
+        # DOWNLOAD FILE
+        # ========================================================
+
+        if expected_size > LARGE_FILE_BYTES:
+
+            # Large file → use Telethon
+            print("📥 Large file → using Telethon")
+
+            await client.download_media(
+                message,
+                file=temp_path,
+                progress_callback=download_progress,
+            )
+
+        else:
+
+            # Small file → use Bot API
+            print("📥 Small file → using Bot API")
+
+            if not telegram_file_id:
+                raise RuntimeError(
+                    "Telegram file_id is missing."
+                )
+
+            job.progress.update(
+                stage="download",
+                done=0,
+                total=expected_size,
+                speed=0.0,
+            )
+
+            download_start = time.monotonic()
+
+            telegram_file = await bot.get_file(
+                telegram_file_id
+            )
+
+            await telegram_file.download_to_drive(
+                custom_path=temp_path
+            )
+
+            elapsed = max(
+                time.monotonic() - download_start,
+                0.001,
+            )
+
+            actual_downloaded = (
+                os.path.getsize(temp_path)
+                if os.path.exists(temp_path)
+                else 0
+            )
+
+            job.progress.update(
+                stage="download",
+                done=actual_downloaded,
+                total=expected_size or actual_downloaded,
+                speed=actual_downloaded / elapsed,
+            )
+
+        # ========================================================
+        # VERIFY DOWNLOAD
+        # ========================================================
+
+        if not os.path.exists(temp_path):
 
             raise RuntimeError(
                 "Telegram download did not "
@@ -2190,11 +2241,8 @@ async def process_message(
             )
 
         actual_size = (
-            os.path.getsize(
-                temp_path
-            )
+            os.path.getsize(temp_path)
         )
-
         # ----------------------------------------------------
         # IMPORTANT:
         #
@@ -3001,243 +3049,296 @@ async def file_received(
         "========================================"
     )
 
+
     # ========================================================
-    # FIND THE TELETHON MESSAGE
-    #
-    # Do NOT depend on Bot API message_id == Telethon message.id
-    # ========================================================
+    # FIND TELETHON MESSAGE ONLY FOR LARGE FILES
+    # ========================================================#
 
     telethon_message = None
 
-    try:
+    if size > LARGE_FILE_BYTES:
 
-        print(
-            "Searching Telegram USER session..."
-        )
+        try:
 
-        # ----------------------------------------------------
-        # Search recent messages in the bot chat.
-        #
-        # We search by the user's sender ID and then compare
-        # the actual file information.
-        # ----------------------------------------------------
-
-        async for candidate in client.iter_messages(
-            BOT_USERNAME,
-            from_user=user_id,
-            limit=3000,
-        ):
-
-            try:
-
-                candidate_sender = int(
-                    candidate.sender_id or 0
-                )
-
-            except Exception:
-
-                candidate_sender = 0
-
-            if candidate_sender != user_id:
-                continue
-
-            # =================================================
-            # DOCUMENT / AUDIO / VIDEO
-            # =================================================
-
-            candidate_file = getattr(
-                candidate,
-                "file",
-                None,
+            print(
+                "🔎 Large file detected."
             )
 
-            if candidate_file:
-
-                candidate_name = (
-                    getattr(
-                        candidate_file,
-                        "name",
-                        None,
-                    )
-                    or ""
-                )
-
-                candidate_size = int(
-                    getattr(
-                        candidate_file,
-                        "size",
-                        0,
-                    )
-                    or 0
-                )
-
-                # ------------------------------------------------
-                # Best match: filename + size
-                # ------------------------------------------------
-
-                if (
-                    candidate_name
-                    and candidate_name == filename
-                    and (
-                        not size
-                        or candidate_size == int(size)
-                    )
-                ):
-
-                    telethon_message = candidate
-
-                    print(
-                        "✅ Telethon file found:"
-                    )
-
-                    print(
-                        "Telethon message ID:",
-                        candidate.id,
-                    )
-
-                    print(
-                        "Filename:",
-                        candidate_name,
-                    )
-
-                    print(
-                        "Size:",
-                        candidate_size,
-                    )
-
-                    break
-
-                # ------------------------------------------------
-                # Fallback: same filename
-                # ------------------------------------------------
-
-                if (
-                    candidate_name
-                    and candidate_name == filename
-                ):
-
-                    telethon_message = candidate
-
-                    print(
-                        "✅ Telethon file found by filename:"
-                    )
-
-                    print(
-                        "Telethon message ID:",
-                        candidate.id,
-                    )
-
-                    break
-
-            # =================================================
-            # PHOTO
-            # =================================================
-
-            candidate_photo = getattr(
-                candidate,
-                "photo",
-                None,
+            print(
+                "Searching Telegram USER session..."
             )
 
-            if candidate_photo:
+            # ------------------------------------------------
+            # Search recent messages in the bot chat.
+            # ------------------------------------------------
 
-                # ------------------------------------------------
-                # A Telegram photo does not have the same
-                # filename as the Bot API generated filename.
-                #
-                # Therefore match by:
-                #
-                # 1. sender
-                # 2. recent message
-                # 3. photo presence
-                #
-                # We only use this fallback for photo messages.
-                # ------------------------------------------------
+            async for candidate in client.iter_messages(
+                BOT_USERNAME,
+                from_user=user_id,
+                limit=3000,
+            ):
 
-                if getattr(
-                    message,
+                try:
+
+                    candidate_sender = int(
+                        candidate.sender_id or 0
+                    )
+
+                except Exception:
+
+                    candidate_sender = 0
+
+                if candidate_sender != user_id:
+                    continue
+
+                # =============================================
+                # DOCUMENT / AUDIO / VIDEO
+                # =============================================
+
+                candidate_file = getattr(
+                    candidate,
+                    "file",
+                    None,
+                )
+
+                if candidate_file:
+
+                    candidate_name = (
+                        getattr(
+                            candidate_file,
+                            "name",
+                            None,
+                        )
+                        or ""
+                    )
+
+                    candidate_size = int(
+                        getattr(
+                            candidate_file,
+                            "size",
+                            0,
+                        )
+                        or 0
+                    )
+
+                    # -----------------------------------------
+                    # Best match: filename + size
+                    # -----------------------------------------
+
+                    if (
+                        candidate_name
+                        and candidate_name == filename
+                        and (
+                            not size
+                            or candidate_size == int(size)
+                        )
+                    ):
+
+                        telethon_message = candidate
+
+                        print(
+                            "✅ Telethon file found:"
+                        )
+
+                        print(
+                            "Telethon message ID:",
+                            candidate.id,
+                        )
+
+                        print(
+                            "Filename:",
+                            candidate_name,
+                        )
+
+                        print(
+                            "Size:",
+                            candidate_size,
+                        )
+
+                        break
+
+                    # -----------------------------------------
+                    # Fallback: same filename
+                    # -----------------------------------------
+
+                    if (
+                        candidate_name
+                        and candidate_name == filename
+                    ):
+
+                        telethon_message = candidate
+
+                        print(
+                            "✅ Telethon file found by filename:"
+                        )
+
+                        print(
+                            "Telethon message ID:",
+                            candidate.id,
+                        )
+
+                        break
+
+                # =============================================
+                # PHOTO
+                # =============================================
+
+                candidate_photo = getattr(
+                    candidate,
                     "photo",
                     None,
-                ):
+                )
 
-                    telethon_message = candidate
+                if candidate_photo:
 
-                    print(
-                        "✅ Telethon photo found:"
-                    )
+                    if getattr(
+                        message,
+                        "photo",
+                        None,
+                    ):
 
-                    print(
-                        "Telethon message ID:",
-                        candidate.id,
-                    )
+                        telethon_message = candidate
 
-                    break
+                        print(
+                            "✅ Telethon photo found:"
+                        )
 
-    except Exception as error:
+                        print(
+                            "Telethon message ID:",
+                            candidate.id,
+                        )
+
+                        break
+
+        except Exception as error:
+
+            print(
+                "❌ Telethon search failed:",
+                repr(error),
+            )
+
+        # ====================================================
+        # LARGE FILE: TELETHON MESSAGE REQUIRED
+        # ====================================================
+
+        if not telethon_message:
+
+            print(
+                "❌ Telethon message could not be found."
+            )
+
+            print(
+                "Bot API message ID:",
+                message_id,
+            )
+
+            print(
+                "Filename:",
+                filename,
+            )
+
+            await app.bot.send_message(
+                user_id,
+                (
+                    "❌ Could not access the Telegram file.\n\n"
+                    f"📄 {filename}\n\n"
+                    "Please send the file again."
+                ),
+            )
+
+            return
+
+        # ====================================================
+        # SAFETY CHECK
+        # ====================================================
+
+        sender_id = int(
+            telethon_message.sender_id
+            or 0
+        )
+
+        if sender_id != user_id:
+
+            print(
+                "❌ Sender mismatch:"
+            )
+
+            print(
+                "Telethon sender:",
+                sender_id,
+            )
+
+            print(
+                "Expected:",
+                user_id,
+            )
+
+            return
+
+    else:
+
+        # ====================================================
+        # SMALL FILE
+        # ====================================================
 
         print(
-            "❌ Telethon search failed:",
-            repr(error),
+            "✅ Small file — skipping Telethon."
         )
+
+        telethon_message = None
 
     # ========================================================
-    # STILL NOT FOUND
+    # CREATE JOB
     # ========================================================
 
-    if not telethon_message:
-
-        print(
-            "❌ Telethon message could not be found."
-        )
-
-        print(
-            "Bot API message ID:",
-            message_id,
-        )
-
-        print(
-            "Filename:",
-            filename,
-        )
-
-        await app.bot.send_message(
-            user_id,
-            (
-                "❌ Could not access the Telegram file.\n\n"
-                f"📄 {filename}\n\n"
-                "Please send the file again."
-            ),
-        )
-
-        return
-
-    # ========================================================
-    # SAFETY CHECK
-    # ========================================================
-
-    sender_id = int(
-        telethon_message.sender_id
-        or 0
+    job = Job(
+        user_id,
+        message_id,
+        filename,
+        size,
     )
 
-    if sender_id != user_id:
+    job.filename = filename
+    job.mime_type = mime_type
+    job.expected_size = size
+    job.telegram_file_id = file_id
+    job.queued = True
 
-        print(
-            "❌ Sender mismatch:"
-        )
+    jobs[key] = job
 
-        print(
-            "Telethon sender:",
-            sender_id,
-        )
+    print(
+        "========================================"
+    )
 
-        print(
-            "Expected:",
-            user_id,
-        )
+    print(
+        "🚀 STARTING FILE PROCESSING"
+    )
 
-        return
+    print(
+        "Filename:",
+        filename,
+    )
 
+    print(
+        "Bot API message:",
+        message_id,
+    )
+
+    print(
+        "Telethon message:",
+        telethon_message.id
+        if telethon_message
+        else "Not used (Bot API)",
+    )
+
+    print(
+        "Size:",
+        size,
+    )
+
+    print(
+        "========================================"
+            )
     # ========================================================
     # CREATE JOB
     # ========================================================
