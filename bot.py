@@ -2002,7 +2002,7 @@ async def process_message(
         mark_message_complete(
             state,
             user_id,
-            message.id,
+            job.message_id,
         )
 
         await state.save()
@@ -2306,7 +2306,7 @@ async def process_message(
         mark_message_complete(
             state,
             user_id,
-            message.id,
+            job.message_id,
         )
 
         await state.save()
@@ -2357,7 +2357,7 @@ async def process_message(
         mark_message_complete(
             state,
             user_id,
-            message.id,
+            job.message_id,
         )
 
         await state.save()
