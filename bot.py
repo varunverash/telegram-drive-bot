@@ -1538,13 +1538,7 @@ def get_file_info(
             or 0
         )
 
-        file_id = (
-            getattr(
-                document,
-                "file_unique_id",
-                None,
-            )
-            or getattr(
+        file_id = getattr(
                 document,
                 "file_id",
                 None,
@@ -1593,13 +1587,7 @@ def get_file_info(
             or 0
         )
 
-        file_id = (
-            getattr(
-                audio,
-                "file_unique_id",
-                None,
-            )
-            or getattr(
+        file_id = getattr(
                 audio,
                 "file_id",
                 None,
@@ -1648,13 +1636,7 @@ def get_file_info(
             or 0
         )
 
-        file_id = (
-            getattr(
-                video,
-                "file_unique_id",
-                None,
-            )
-            or getattr(
+        file_id = getattr(
                 video,
                 "file_id",
                 None,
@@ -1700,13 +1682,7 @@ def get_file_info(
                 or 0
             )
 
-            file_id = (
-                getattr(
-                    photo,
-                    "file_unique_id",
-                    None,
-                )
-                or getattr(
+            file_id =  getattr(
                     photo,
                     "file_id",
                     None,
@@ -2056,7 +2032,7 @@ async def process_message(
                 f"📄 {filename}"
             ),
             reply_to_message_id=(
-                message.id
+                job.message_id
             ),
             allow_sending_without_reply=True,
         )
