@@ -102,6 +102,7 @@ PROCESS_INTERVAL_SECONDS = 2
 LARGE_FILE_BYTES = (
     200 * 1024 * 1024
 )
+BRIDGE_CHAT_ID = -1003971557889
 
 # Up to 6 small files simultaneously
 SMALL_CONCURRENCY = 6
@@ -3040,170 +3041,229 @@ async def file_received(
 
     # ========================================================
     # FIND TELETHON MESSAGE ONLY FOR LARGE FILES
-    # ========================================================#
+    # ========================================================
+    # FIND TELETHON MESSAGE ONLY FOR LARGE FILES
+    # ========================================================
 
     telethon_message = None
 
     if size > LARGE_FILE_BYTES:
 
-        try:
+        # ====================================================
+        # TELETHON ACCOUNT → DIRECT SEARCH
+        # ====================================================
+
+        if user_id == 556318583:
+
+            try:
+
+                print(
+                    "🔎 Large file detected."
+                )
+
+                print(
+                    "👤 Sender is Telethon account."
+                )
+
+                print(
+                    "Searching Telegram USER session..."
+                )
+
+                async for candidate in client.iter_messages(
+                    BOT_USERNAME,
+                    from_user=user_id,
+                    limit=3000,
+                ):
+
+                    candidate_file = getattr(
+                        candidate,
+                        "file",
+                        None,
+                    )
+
+                    if candidate_file:
+
+                        candidate_name = (
+                            getattr(
+                                candidate_file,
+                                "name",
+                                None,
+                            )
+                            or ""
+                        )
+
+                        candidate_size = int(
+                            getattr(
+                                candidate_file,
+                                "size",
+                                0,
+                            )
+                            or 0
+                        )
+
+                        # ------------------------------------
+                        # Best match: filename + size
+                        # ------------------------------------
+
+                        if (
+                            candidate_name
+                            and candidate_name == filename
+                            and (
+                                not size
+                                or candidate_size == int(size)
+                            )
+                        ):
+
+                            telethon_message = candidate
+
+                            print(
+                                "✅ Telethon file found:"
+                            )
+
+                            print(
+                                "Telethon message ID:",
+                                candidate.id,
+                            )
+
+                            print(
+                                "Filename:",
+                                candidate_name,
+                            )
+
+                            print(
+                                "Size:",
+                                candidate_size,
+                            )
+
+                            break
+
+                        # ------------------------------------
+                        # Fallback: same filename
+                        # ------------------------------------
+
+                        if (
+                            candidate_name
+                            and candidate_name == filename
+                        ):
+
+                            telethon_message = candidate
+
+                            print(
+                                "✅ Telethon file found by filename:"
+                            )
+
+                            print(
+                                "Telethon message ID:",
+                                candidate.id,
+                            )
+
+                            break
+
+                    # ----------------------------------------
+                    # PHOTO
+                    # ----------------------------------------
+
+                    candidate_photo = getattr(
+                        candidate,
+                        "photo",
+                        None,
+                    )
+
+                    if candidate_photo:
+
+                        if getattr(
+                            message,
+                            "photo",
+                            None,
+                        ):
+
+                            telethon_message = candidate
+
+                            print(
+                                "✅ Telethon photo found:"
+                            )
+
+                            print(
+                                "Telethon message ID:",
+                                candidate.id,
+                            )
+
+                            break
+
+            except Exception as error:
+
+                print(
+                    "❌ Telethon search failed:",
+                    repr(error),
+                )
+
+        # ====================================================
+        # OTHER ACCOUNT → DRIVE BRIDGE
+        # ====================================================
+
+        else:
 
             print(
                 "🔎 Large file detected."
             )
 
             print(
-                "Searching Telegram USER session..."
+                "👤 File came from another Telegram account."
             )
-
-            # ------------------------------------------------
-            # Search recent messages in the bot chat.
-            # ------------------------------------------------
-
-            async for candidate in client.iter_messages(
-                BOT_USERNAME,
-                from_user=user_id,
-                limit=3000,
-            ):
-
-                try:
-
-                    candidate_sender = int(
-                        candidate.sender_id or 0
-                    )
-
-                except Exception:
-
-                    candidate_sender = 0
-
-                if candidate_sender != user_id:
-                    continue
-
-                # =============================================
-                # DOCUMENT / AUDIO / VIDEO
-                # =============================================
-
-                candidate_file = getattr(
-                    candidate,
-                    "file",
-                    None,
-                )
-
-                if candidate_file:
-
-                    candidate_name = (
-                        getattr(
-                            candidate_file,
-                            "name",
-                            None,
-                        )
-                        or ""
-                    )
-
-                    candidate_size = int(
-                        getattr(
-                            candidate_file,
-                            "size",
-                            0,
-                        )
-                        or 0
-                    )
-
-                    # -----------------------------------------
-                    # Best match: filename + size
-                    # -----------------------------------------
-
-                    if (
-                        candidate_name
-                        and candidate_name == filename
-                        and (
-                            not size
-                            or candidate_size == int(size)
-                        )
-                    ):
-
-                        telethon_message = candidate
-
-                        print(
-                            "✅ Telethon file found:"
-                        )
-
-                        print(
-                            "Telethon message ID:",
-                            candidate.id,
-                        )
-
-                        print(
-                            "Filename:",
-                            candidate_name,
-                        )
-
-                        print(
-                            "Size:",
-                            candidate_size,
-                        )
-
-                        break
-
-                    # -----------------------------------------
-                    # Fallback: same filename
-                    # -----------------------------------------
-
-                    if (
-                        candidate_name
-                        and candidate_name == filename
-                    ):
-
-                        telethon_message = candidate
-
-                        print(
-                            "✅ Telethon file found by filename:"
-                        )
-
-                        print(
-                            "Telethon message ID:",
-                            candidate.id,
-                        )
-
-                        break
-
-                # =============================================
-                # PHOTO
-                # =============================================
-
-                candidate_photo = getattr(
-                    candidate,
-                    "photo",
-                    None,
-                )
-
-                if candidate_photo:
-
-                    if getattr(
-                        message,
-                        "photo",
-                        None,
-                    ):
-
-                        telethon_message = candidate
-
-                        print(
-                            "✅ Telethon photo found:"
-                        )
-
-                        print(
-                            "Telethon message ID:",
-                            candidate.id,
-                        )
-
-                        break
-
-        except Exception as error:
 
             print(
-                "❌ Telethon search failed:",
-                repr(error),
+                "🌉 Copying file to Drive Bridge..."
             )
+
+            try:
+
+                bridge_result = await app.bot.copy_message(
+                    chat_id=BRIDGE_CHAT_ID,
+                    from_chat_id=user_id,
+                    message_id=message_id,
+                )
+
+                bridge_message_id = int(
+                    bridge_result.message_id
+                )
+
+                print(
+                    "✅ File copied to Drive Bridge."
+                )
+
+                print(
+                    "Bridge message ID:",
+                    bridge_message_id,
+                )
+
+                telethon_message = await client.get_messages(
+                    BRIDGE_CHAT_ID,
+                    ids=bridge_message_id,
+                )
+
+                if telethon_message:
+
+                    print(
+                        "✅ Bridge file found by Telethon."
+                    )
+
+                    print(
+                        "Telethon bridge message ID:",
+                        telethon_message.id,
+                    )
+
+                else:
+
+                    print(
+                        "❌ Telethon could not retrieve bridge message."
+                    )
+
+            except Exception as error:
+
+                print(
+                    "❌ Bridge copy/retrieval failed:",
+                    repr(error),
+                )
 
         # ====================================================
         # LARGE FILE: TELETHON MESSAGE REQUIRED
@@ -3232,33 +3292,6 @@ async def file_received(
                     f"📄 {filename}\n\n"
                     "Please send the file again."
                 ),
-            )
-
-            return
-
-        # ====================================================
-        # SAFETY CHECK
-        # ====================================================
-
-        sender_id = int(
-            telethon_message.sender_id
-            or 0
-        )
-
-        if sender_id != user_id:
-
-            print(
-                "❌ Sender mismatch:"
-            )
-
-            print(
-                "Telethon sender:",
-                sender_id,
-            )
-
-            print(
-                "Expected:",
-                user_id,
             )
 
             return
@@ -3326,59 +3359,10 @@ async def file_received(
 
     print(
         "========================================"
-            )
+    )
+
     # ========================================================
-    # CREATE JOB
-    # ========================================================
-
-    job = Job(
-        user_id,
-        message_id,
-        filename,
-        size,
-    )
-
-    job.filename = filename
-    job.mime_type = mime_type
-    job.expected_size = size
-    job.telegram_file_id = file_id
-    job.queued = True
-
-    jobs[key] = job
-
-    print(
-        "========================================"
-    )
-
-    print(
-        "🚀 STARTING FILE PROCESSING"
-    )
-
-    print(
-        "Filename:",
-        filename,
-    )
-
-    print(
-        "Bot API message:",
-        message_id,
-    )
-
-    print(
-    "Telethon message:",
-    telethon_message.id
-    if telethon_message
-    else "Not used (Bot API)",
-    )
-    
-    print(
-        "Size:",
-        size,
-    )
-
-    print(
-        "========================================"
-    )
+    # SELECT CONCURRENCY
 
     # ========================================================
     # SELECT CONCURRENCY
@@ -3563,40 +3547,7 @@ async def post_init(app):
     )
 
         # --------------------------------------------------------
-    # Find Telegram Bridge Group
-    # --------------------------------------------------------
-          # --------------------------------------------------------
-    # Find Drive Bridge
-    # --------------------------------------------------------
 
-    print("🔎 Searching for Drive Bridge...")
-
-    dialogs = await client.get_dialogs()
-
-    bridge_found = False
-
-    for dialog in dialogs:
-
-        name = (
-            getattr(dialog, "name", "")
-            or ""
-        ).strip()
-
-        if name.lower() == "drive bridge":
-
-            print(
-                "🌉 BRIDGE CHAT ID:",
-                dialog.id,
-            )
-
-            bridge_found = True
-            break
-
-    if not bridge_found:
-
-        print(
-            "❌ Drive Bridge was not found."
-        )
 
     # --------------------------------------------------------
     # Application state
