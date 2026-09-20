@@ -3565,39 +3565,38 @@ async def post_init(app):
         # --------------------------------------------------------
     # Find Telegram Bridge Group
     # --------------------------------------------------------
-        # --------------------------------------------------------
-    # DEBUG: SHOW TELEGRAM GROUPS
+          # --------------------------------------------------------
+    # Find Drive Bridge
     # --------------------------------------------------------
 
-    print("🔎 Telegram groups visible to Telethon:")
+    print("🔎 Searching for Drive Bridge...")
 
     dialogs = await client.get_dialogs()
 
-    for dialog in dialogs:
+    bridge_found = False
 
-        if dialog.is_group or dialog.is_channel:
+    for dialog:
+
+        name = (
+            getattr(dialog, "name", "")
+            or ""
+        ).strip()
+
+        if name.lower() == "drive bridge":
 
             print(
-                "CHAT:",
-                repr(dialog.name),
-                "ID:",
+                "🌉 BRIDGE CHAT ID:",
                 dialog.id,
             )
 
-    # --------------------------------------------------------
-    # Get Drive folders
-    #
-    # IMPORTANT:
-    # This happens AFTER Telegram/Telethon is connected.
-    # --------------------------------------------------------
+            bridge_found = True
+            break
 
-    print("Loading Google Drive folders...")
+    if not bridge_found:
 
-    folder_ids = await asyncio.to_thread(
-        get_folder_ids_sync
-    )
-
-    print("✅ Google Drive folders ready.")
+        print(
+            "❌ Drive Bridge was not found."
+        )
 
     # --------------------------------------------------------
     # Application state
