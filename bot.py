@@ -98,14 +98,31 @@ INITIAL_RECOVERY_HOURS = 12
 
 PROCESS_INTERVAL_SECONDS = 2
 
-# Files above this are considered large
+# ============================================================
+# FILE SIZE / WORKER SETTINGS
+# ============================================================
+
+# 0–20 MB → Bot API
+SMALL_FILE_BYTES = (
+    20 * 1024 * 1024
+)
+
+# >200 MB → large Telethon files
+# >20 MB and <=200 MB → medium Telethon files
 LARGE_FILE_BYTES = (
     200 * 1024 * 1024
 )
+
 BRIDGE_CHAT_ID = -1003971557889
 
-# Up to 6 small files simultaneously
+# 0–20 MB → Bot API
 SMALL_CONCURRENCY = 6
+
+# >20 MB and <=200 MB → Telethon
+MEDIUM_CONCURRENCY = 4
+
+# >200 MB → Telethon
+LARGE_CONCURRENCY = 4
 
 # Google Drive resumable upload chunk
 DRIVE_CHUNK_SIZE = (
@@ -2150,7 +2167,7 @@ async def process_message(
         # DOWNLOAD FILE
         # ========================================================
 
-        if expected_size > LARGE_FILE_BYTES:
+        if expected_size > SMALL_FILE_BYTES:
 
             # Large file → use Telethon
             print("📥 Large file → using Telethon")
@@ -3047,7 +3064,7 @@ async def file_received(
 
     telethon_message = None
 
-    if size > LARGE_FILE_BYTES:
+    if size > SMALL_FILE_BYTES:
 
         # ====================================================
         # TELETHON ACCOUNT → DIRECT SEARCH
@@ -3368,16 +3385,25 @@ async def file_received(
     # SELECT CONCURRENCY
     # ========================================================
 
-    if size > LARGE_FILE_BYTES:
+    if size <= SMALL_FILE_BYTES:
 
-        semaphore = (
-            app.bot_data["large_sem"]
-        )
-
-    else:
-
+        # 0–20 MB → Bot API
         semaphore = (
             app.bot_data["small_sem"]
+        )
+
+    elif size <= LARGE_FILE_BYTES:
+
+        # >20 MB and <=200 MB → Telethon
+        semaphore = (
+            app.bot_data["medium_sem"]
+        )
+  
+    else:
+
+    # >200 MB → Telethon
+        semaphore = (
+            app.bot_data["large_sem"]
         )
 
     # ========================================================
@@ -3572,13 +3598,22 @@ async def post_init(app):
 
         "jobs": {},
 
-        "large_sem": asyncio.Semaphore(4),
 
+    # 0–20 MB → Bot API
         "small_sem": asyncio.Semaphore(
             SMALL_CONCURRENCY
         ),
-    })
-        
+
+    # >20 MB and <=200 MB → Telethon
+        "medium_sem": asyncio.Semaphore(
+            MEDIUM_CONCURRENCY
+        ),
+
+    # >200 MB → Telethon
+        "large_sem": asyncio.Semaphore(
+            LARGE_CONCURRENCY
+        ),
+  })
 
 
     # --------------------------------------------------------
