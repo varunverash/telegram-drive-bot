@@ -3216,13 +3216,23 @@ async def file_received(
 
         # ====================================================
         # OTHER ACCOUNT → DRIVE BRIDGE
+                # ====================================================
+        # OTHER ACCOUNT → DRIVE BRIDGE
         # ====================================================
 
         else:
 
-            print(
-                "🔎 Large file detected."
-            )
+            if size <= LARGE_FILE_BYTES:
+
+                print(
+                    "🔎 Medium file detected."
+                )
+
+            else:
+
+                print(
+                    "🔎 Large file detected."
+                )
 
             print(
                 "👤 File came from another Telegram account."
@@ -3238,7 +3248,7 @@ async def file_received(
                     chat_id=BRIDGE_CHAT_ID,
                     from_chat_id=user_id,
                     message_id=message_id,
-                )
+                ).    
 
                 bridge_message_id = int(
                     bridge_result.message_id
