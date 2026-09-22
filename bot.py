@@ -3248,7 +3248,7 @@ async def file_received(
                     chat_id=BRIDGE_CHAT_ID,
                     from_chat_id=user_id,
                     message_id=message_id,
-                ).    
+                )
 
                 bridge_message_id = int(
                     bridge_result.message_id
